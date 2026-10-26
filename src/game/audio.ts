@@ -30,6 +30,11 @@ class SoundEngine {
     }
   }
 
+  /** Глушит звук совсем (вкладка скрыта, пауза); init() возобновляет. */
+  suspend() {
+    if (this.ctx && this.ctx.state === "running") this.ctx.suspend().catch(() => {});
+  }
+
   setMuted(m: boolean) {
     this.muted = m;
     if (this.master && this.ctx) {
@@ -108,6 +113,33 @@ class SoundEngine {
   pickup() {
     this.tone({ f: 660, t: 0.07, type: "triangle", v: 0.2 });
     this.tone({ f: 990, t: 0.1, type: "triangle", v: 0.2, delay: 0.07 });
+  }
+
+  crumble() {
+    this.noise(0.12, 0.16, 2200, 500);
+    this.tone({ f: 220, slide: 90, t: 0.08, type: "triangle", v: 0.08 });
+  }
+
+  freeze() {
+    [1320, 990, 740].forEach((f, i) => this.tone({ f, t: 0.18, type: "sine", v: 0.14, delay: i * 0.05 }));
+  }
+
+  shock() {
+    this.noise(0.45, 0.4, 1800, 80);
+    this.tone({ f: 180, slide: 40, t: 0.4, type: "sawtooth", v: 0.25 });
+  }
+
+  charge() {
+    this.tone({ f: 300, slide: 900, t: 0.5, type: "sawtooth", v: 0.07 });
+  }
+
+  warn() {
+    this.tone({ f: 520, t: 0.09, type: "square", v: 0.08 });
+  }
+
+  boss() {
+    this.tone({ f: 90, slide: 50, t: 0.9, type: "sawtooth", v: 0.3 });
+    this.noise(0.8, 0.3, 900, 60);
   }
 
   beep(final: boolean) {

@@ -1,14 +1,21 @@
 {
-  "name": "react-vite-tailwind",
+  "name": "neon-duel",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build --mode web",
+    "build:web": "tsc --noEmit && vite build --mode web",
+    "build:vkplay": "tsc --noEmit && vite build --mode vkplay",
+    "build:all": "npm run build:web && npm run build:vkplay",
+    "pack": "npm run build:all && node scripts/pack.mjs web vkplay",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/rubik": "^5.3.0",
+    "@fontsource/russo-one": "^5.3.0",
     "clsx": "2.1.1",
     "lucide-react": "^1.61.0",
     "react": "19.2.6",
@@ -21,6 +28,7 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
+    "fflate": "^0.8.3",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
     "vite": "7.3.2",
