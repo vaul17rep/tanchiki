@@ -40,6 +40,7 @@ export class Nav {
   private ver = -1;
   private boundsStamp = 0;
   private builtStamp = -1;
+  private builtAt = 0;
 
   constructor(private walls: Walls, bounds: Bounds, private tankR: number) {
     this.bounds = bounds;
@@ -53,6 +54,10 @@ export class Nav {
   /** Вызывать раз в кадр: дёшево, если ничего не менялось. */
   sync() {
     if (this.ver === this.walls.version && this.builtStamp === this.boundsStamp) return;
+    // при шквале выстрелов стены ломаются каждый кадр: пересобираем сетку не чаще раза в 90 мс
+    const nowMs = performance.now();
+    if (this.builtStamp === this.boundsStamp && nowMs - this.builtAt < 90) return;
+    this.builtAt = nowMs;
     this.ver = this.walls.version;
     this.builtStamp = this.boundsStamp;
     this.rects = this.walls.alive();
