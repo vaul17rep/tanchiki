@@ -30,6 +30,11 @@ class SoundEngine {
     }
   }
 
+  /** Глушит звук совсем (вкладка скрыта, пауза); init() возобновляет. */
+  suspend() {
+    if (this.ctx && this.ctx.state === "running") this.ctx.suspend().catch(() => {});
+  }
+
   setMuted(m: boolean) {
     this.muted = m;
     if (this.master && this.ctx) {

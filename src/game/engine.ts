@@ -1,4 +1,7 @@
 import { sound } from "./audio";
+import { Bot } from "./bot";
+import type { GameConfig } from "./config";
+import { MAPS, MAP_COUNT, type Rect } from "./maps";
 
 /* ================================================================== */
 /*  NEON DUEL — движок арены                                          */
@@ -13,8 +16,13 @@ const CAP_HP = 5;
 const BULLET_SPEED = 580;
 const BULLET_R = 5;
 const ROUND_TIME = 60;
-const WIN_SCORE = 3;
 const MAX_BULLETS = 5;
+
+interface PadInput {
+  x: number;
+  y: number;
+  fire: boolean;
+}
 
 type Phase = "countdown" | "play" | "roundover" | "gameover";
 
@@ -38,13 +46,8 @@ export interface UiState {
   winner: number; // -1 нет
   roundWinner: number;
   fx: [FxState, FxState];
-}
-
-interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  winScore: number;
+  maxHp: number;
 }
 
 interface Tank {
@@ -77,6 +80,8 @@ interface Bullet {
   bounces: number;
   trail: { x: number; y: number }[];
   alive: boolean;
+  /** пока пуля не вышла из зоны своего танка, владелец неуязвим */
+  safe: boolean;
 }
 
 interface Particle {
@@ -108,19 +113,6 @@ interface PowerUp {
   born: number;
   expire: number;
 }
-
-/* ------------------ препятствия (симметрично) ------------------ */
-const OBSTACLES: Rect[] = [
-  { x: 592, y: 318, w: 96, h: 84 },
-  { x: 268, y: 150, w: 130, h: 26 },
-  { x: 882, y: 150, w: 130, h: 26 },
-  { x: 268, y: 544, w: 130, h: 26 },
-  { x: 882, y: 544, w: 130, h: 26 },
-  { x: 168, y: 300, w: 26, h: 120 },
-  { x: 1086, y: 300, w: 26, h: 120 },
-  { x: 430, y: 330, w: 70, h: 60 },
-  { x: 780, y: 330, w: 70, h: 60 },
-];
 
 const OB_COLORS = ["#22d3ee", "#a78bfa", "#f472b6", "#818cf8", "#22d3ee", "#f472b6", "#a78bfa", "#38bdf8", "#e879f9"];
 
@@ -168,6 +160,14 @@ export class Game {
   private keys = new Set<string>();
   private destroyed = false;
 
+  private cfg: GameConfig;
+  private obstacles: Rect[];
+  private bot: Bot | null = null;
+  /** ввод с экрана (виртуальные стики) и с геймпадов, по игрокам */
+  private touch: PadInput[] = [{ x: 0, y: 0, fire: false }, { x: 0, y: 0, fire: false }];
+  private pads: PadInput[] = [{ x: 0, y: 0, fire: false }, { x: 0, y: 0, fire: false }];
+  private padStartHeld = false;
+
   private phase: Phase = "countdown";
   private phaseEndsAt = 2200;
   private goUntil = 0;
@@ -192,10 +192,21 @@ export class Game {
   private shake = 0;
   private dust: { x: number; y: number; s: number; o: number }[] = [];
 
-  constructor(canvas: HTMLCanvasElement, onUi: (u: UiState) => void) {
+  constructor(canvas: HTMLCanvasElement, cfg: GameConfig, onUi: (u: UiState) => void) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
     this.onUi = onUi;
+    this.cfg = cfg;
+
+    const mapIdx = cfg.map >= 0 && cfg.map < MAP_COUNT ? cfg.map : Math.floor(Math.random() * MAP_COUNT);
+    this.obstacles = MAPS[mapIdx];
+    if (cfg.mode === "bot") {
+      this.bot = new Bot(
+        { W, H, wall: WALL, tankR: TANK_R, bulletSpeed: BULLET_SPEED, maxHp: CAP_HP },
+        this.obstacles,
+        cfg.difficulty
+      );
+    }
 
     this.resetTanks();
     for (let i = 0; i < 46; i++) {
@@ -204,6 +215,8 @@ export class Game {
 
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("blur", this.clearKeys);
+    document.addEventListener("visibilitychange", this.clearKeys);
 
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas);
@@ -225,7 +238,76 @@ export class Game {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("blur", this.clearKeys);
+    document.removeEventListener("visibilitychange", this.clearKeys);
     this.ro?.disconnect();
+  }
+
+  /** Потеря фокуса: иначе отпущенная вне окна клавиша «залипает». */
+  private clearKeys = () => {
+    this.keys.clear();
+  };
+
+  /** Виртуальный стик и кнопка огня с сенсорного экрана. */
+  setTouch(player: 0 | 1, x: number, y: number, fire: boolean) {
+    const t = this.touch[player];
+    t.x = x;
+    t.y = y;
+    t.fire = fire;
+  }
+
+  private pollGamepads() {
+    const list = (navigator.getGamepads?.() ?? []).filter((g): g is Gamepad => !!g && g.connected);
+    const slots = this.cfg.mode === "bot" ? 1 : 2;
+    for (let i = 0; i < 2; i++) {
+      const g = i < slots ? list[i] : undefined;
+      const out = this.pads[i];
+      if (!g) {
+        out.x = 0;
+        out.y = 0;
+        out.fire = false;
+        continue;
+      }
+      let x = g.axes[0] ?? 0;
+      let y = g.axes[1] ?? 0;
+      if (Math.hypot(x, y) < 0.25) {
+        x = 0;
+        y = 0;
+      }
+      const b = (n: number) => !!g.buttons[n]?.pressed;
+      if (b(14)) x = -1;
+      if (b(15)) x = 1;
+      if (b(12)) y = -1;
+      if (b(13)) y = 1;
+      out.x = x;
+      out.y = y;
+      out.fire = b(0) || b(1) || b(2) || b(3) || b(5) || b(7);
+    }
+    // Start на первом геймпаде = пауза
+    const start = !!list[0]?.buttons[9]?.pressed;
+    if (start && !this.padStartHeld && this.phase !== "gameover") this.togglePause();
+    this.padStartHeld = start;
+  }
+
+  private readInput(i: number): { ix: number; iy: number; fire: boolean } {
+    const k = i === 0
+      ? { l: "KeyA", r: "KeyD", u: "KeyW", d: "KeyS", f: ["KeyF", "Space"] }
+      : { l: "ArrowLeft", r: "ArrowRight", u: "ArrowUp", d: "ArrowDown", f: ["Enter"] };
+    // против бота обе раскладки управляют единственным игроком
+    const both = this.bot && i === 0;
+    const has = (a: string, b: string) => this.keys.has(a) || (!!both && this.keys.has(b));
+    const kx = (has(k.l, "ArrowLeft") ? -1 : 0) + (has(k.r, "ArrowRight") ? 1 : 0);
+    const ky = (has(k.u, "ArrowUp") ? -1 : 0) + (has(k.d, "ArrowDown") ? 1 : 0);
+    const p = this.pads[i];
+    const t = this.touch[i];
+    let ix = clamp(kx + p.x + t.x, -1, 1);
+    let iy = clamp(ky + p.y + t.y, -1, 1);
+    if (Math.hypot(ix, iy) < 0.12) {
+      ix = 0;
+      iy = 0;
+    }
+    const keyFire = k.f.some((c) => this.keys.has(c)) || (!!both && this.keys.has("Enter"));
+    return { ix, iy, fire: keyFire || p.fire || t.fire };
   }
 
   /* ------------------------- ввод ------------------------- */
@@ -310,6 +392,7 @@ export class Game {
   /* ================================================================== */
 
   private frame(dtReal: number) {
+    this.pollGamepads();
     if (!this.paused) {
       // возврат slow-mo к норме
       this.timeScale += (1 - this.timeScale) * Math.min(1, dtReal * 3.2);
@@ -384,30 +467,31 @@ export class Game {
 
   private updateTanks(dt: number) {
     const now = this.clock;
-    const schemes = [
-      { up: "KeyW", down: "KeyS", left: "KeyA", right: "KeyD", fire: ["KeyF", "Space"] },
-      { up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight", fire: ["Enter"] },
-    ];
-
     this.tanks.forEach((t, i) => {
       if (!t.alive) return;
-      const s = schemes[i];
-      let ix = (this.keys.has(s.left) ? -1 : 0) + (this.keys.has(s.right) ? 1 : 0);
-      let iy = (this.keys.has(s.up) ? -1 : 0) + (this.keys.has(s.down) ? 1 : 0);
+      const inp =
+        i === 1 && this.bot
+          ? this.bot.update(dt, t, this.tanks[0], this.bullets, this.powerups, 1)
+          : this.readInput(i);
+      let ix = inp.ix;
+      let iy = inp.iy;
       const speedBoost = now < t.speedUntil;
       const maxSpeed = speedBoost ? 350 : 235;
       const accel = 1550;
 
       if (ix !== 0 || iy !== 0) {
         const len = Math.hypot(ix, iy);
-        ix /= len;
-        iy /= len;
+        if (len > 1) {
+          ix /= len;
+          iy /= len;
+        }
         t.vx += ix * accel * dt;
         t.vy += iy * accel * dt;
         const sp = Math.hypot(t.vx, t.vy);
-        if (sp > maxSpeed) {
-          t.vx = (t.vx / sp) * maxSpeed;
-          t.vy = (t.vy / sp) * maxSpeed;
+        const cap = maxSpeed * Math.max(0.5, Math.min(1, len));
+        if (sp > cap) {
+          t.vx = (t.vx / sp) * cap;
+          t.vy = (t.vy / sp) * cap;
         }
         t.angle = rotToward(t.angle, Math.atan2(iy, ix), 11 * dt);
         // выхлоп ускорения
@@ -436,7 +520,7 @@ export class Game {
       t.y = clamp(t.y, WALL + TANK_R, H - WALL - TANK_R);
 
       // препятствия
-      for (const o of OBSTACLES) this.pushCircleOut(t, TANK_R, o);
+      for (const o of this.obstacles) this.pushCircleOut(t, TANK_R, o);
 
       // танк-танк
       const other = this.tanks[1 - i];
@@ -457,7 +541,7 @@ export class Game {
       // стрельба
       t.cooldown -= dt;
       t.recoil = Math.max(0, t.recoil - dt * 6);
-      const wantFire = s.fire.some((k) => this.keys.has(k));
+      const wantFire = inp.fire;
       const cd = now < t.rapidUntil ? 0.16 : 0.42;
       const myBullets = this.bullets.filter((b) => b.owner === i && b.alive).length;
       if (wantFire && t.cooldown <= 0 && myBullets < MAX_BULLETS) {
@@ -489,6 +573,7 @@ export class Game {
       bounces: 0,
       trail: [],
       alive: true,
+      safe: true,
     });
     sound.shoot();
     // вспышка выстрела
@@ -547,7 +632,7 @@ export class Game {
       else if (b.y > H - WALL - BULLET_R) { b.y = H - WALL - BULLET_R; b.vy = -Math.abs(b.vy); bounced = true; }
 
       // препятствия
-      for (const o of OBSTACLES) {
+      for (const o of this.obstacles) {
         const cx = clamp(b.x, o.x, o.x + o.w);
         const cy = clamp(b.y, o.y, o.y + o.h);
         const dx = b.x - cx;
@@ -596,9 +681,13 @@ export class Game {
       this.tanks.forEach((t, ti) => {
         if (!b.alive || !t.alive) return;
         const isOwner = ti === b.owner;
-        const grace = now - b.born < 350 && b.bounces === 0;
-        if (isOwner && grace) return;
-        if (Math.hypot(t.x - b.x, t.y - b.y) < TANK_R + BULLET_R) {
+        const d = Math.hypot(t.x - b.x, t.y - b.y);
+        // своя пуля опасна для владельца, только отлетев от него (стрельба в упор в стену не бьёт по себе)
+        if (isOwner && b.safe) {
+          if (d > TANK_R + BULLET_R + 4) b.safe = false;
+          else return;
+        }
+        if (d < TANK_R + BULLET_R) {
           b.alive = false;
           this.hitTank(t, ti);
         }
@@ -612,10 +701,12 @@ export class Game {
   }
 
   private hitTank(t: Tank, idx: number) {
+    // раунд уже решён в этом кадре (одновременное попадание): второй удар не считается
+    if (this.phase !== "play") return;
     const now = this.clock;
     if (now < t.shieldUntil) {
       t.shieldUntil = 0;
-      this.addFloat(t.x, t.y - 26, "БЛОК", "#93c5fd");
+      this.addFloat(t.x, t.y - 26, this.cfg.texts.block, "#93c5fd");
       sound.block();
       this.shake = Math.max(this.shake, 6);
       for (let k = 0; k < 16; k++) {
@@ -654,7 +745,7 @@ export class Game {
     if (this.phase !== "play") return;
     this.scores[idx] += 1;
     this.roundWinner = idx;
-    if (this.scores[idx] >= WIN_SCORE) this.winner = idx;
+    if (this.scores[idx] >= this.cfg.winScore) this.winner = idx;
     this.phase = "roundover";
     this.phaseEndsAt = this.clock + 2300;
   }
@@ -673,7 +764,7 @@ export class Game {
       const x = rand(WALL + 70, W - WALL - 70);
       const y = rand(WALL + 60, H - WALL - 60);
       let ok = true;
-      for (const o of OBSTACLES) {
+      for (const o of this.obstacles) {
         if (x > o.x - 34 && x < o.x + o.w + 34 && y > o.y - 34 && y < o.y + o.h + 34) { ok = false; break; }
       }
       if (ok) for (const t of this.tanks) {
@@ -700,15 +791,15 @@ export class Game {
         break;
       case "shield":
         t.shieldUntil = now + 7000;
-        this.addFloat(t.x, t.y - 26, "ЩИТ", "#93c5fd");
+        this.addFloat(t.x, t.y - 26, this.cfg.texts.shield, "#93c5fd");
         break;
       case "rapid":
         t.rapidUntil = now + 6000;
-        this.addFloat(t.x, t.y - 26, "ТЕМП", "#fde68a");
+        this.addFloat(t.x, t.y - 26, this.cfg.texts.rapid, "#fde68a");
         break;
       case "speed":
         t.speedUntil = now + 6000;
-        this.addFloat(t.x, t.y - 26, "СКОРОСТЬ", "#d8b4fe");
+        this.addFloat(t.x, t.y - 26, this.cfg.texts.speed, "#d8b4fe");
         break;
     }
     void idx;
@@ -815,7 +906,7 @@ export class Game {
     }
 
     // препятствия
-    OBSTACLES.forEach((o, i) => {
+    this.obstacles.forEach((o, i) => {
       const col = OB_COLORS[i % OB_COLORS.length];
       ctx.save();
       ctx.shadowColor = col;
@@ -1165,6 +1256,8 @@ export class Game {
       winner: this.winner,
       roundWinner: this.roundWinner,
       fx: [fxOf(this.tanks[0]), fxOf(this.tanks[1])],
+      winScore: this.cfg.winScore,
+      maxHp: CAP_HP,
     });
   }
 }

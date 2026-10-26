@@ -8,12 +8,24 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Сборка под площадку выбирается режимом: `vite build --mode vkplay` (по умолчанию web).
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react(), tailwindcss(), viteSingleFile()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "src"),
+export default defineConfig(({ mode }) => {
+  const platform = mode === "vkplay" ? "vkplay" : "web";
+  return {
+    // относительные пути: игра открывается и из iframe на чужом домене, и из подпапки хостинга
+    base: "./",
+    plugins: [react(), tailwindcss(), viteSingleFile()],
+    define: {
+      __PLATFORM__: JSON.stringify(platform),
     },
-  },
+    build: {
+      outDir: `dist/${platform}`,
+    },
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "src"),
+      },
+    },
+  };
 });
