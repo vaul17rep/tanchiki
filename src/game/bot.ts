@@ -109,6 +109,9 @@ export class Bot {
   private chargeFor = 0;
   private ricAim: number | null = null;
   private ricIn = 0;
+  private hold = 260;
+  private strafe = 1;
+  private strafeIn = 0;
 
   constructor(
     private nav: Nav,
@@ -124,6 +127,10 @@ export class Bot {
       this.p.gap *= 1.3;
     }
     if (kind === "kamikaze") this.p.speed = 1;
+    // у каждого бота своя излюбленная дистанция боя, чтобы толпа не липла к цели вплотную
+    const [h0, h1] = kind === "scout" ? [120, 240] : kind === "heavy" ? [150, 280] : kind === "boss" ? [260, 400] : [190, 380];
+    this.hold = h0 + Math.random() * (h1 - h0);
+    this.strafe = Math.random() < 0.5 ? 1 : -1;
     if (kind === "sniper") {
       this.p.range = 1200;
       this.p.tol = 0.08;
@@ -294,6 +301,11 @@ export class Bot {
     // раз в think секунд пересматриваем цель движения
     this.thinkIn -= dt;
     this.repathIn -= dt;
+    this.strafeIn -= dt;
+    if (this.strafeIn <= 0) {
+      this.strafeIn = 1.5 + Math.random() * 2;
+      if (Math.random() < 0.6) this.strafe = -this.strafe;
+    }
     if (this.thinkIn <= 0) {
       this.thinkIn = p.think;
       let gx = enemy.x;
@@ -317,9 +329,15 @@ export class Bot {
         const wp = this.path[Math.min(2, this.path.length - 1)];
         this.move = wp ? { x: wp.x - me.x, y: wp.y - me.y } : { x: gx - me.x, y: gy - me.y };
       }
-      // слишком близко, а выстрела нет: отступаем боком
-      if (seen && dist < 130 && !aligned && this.kind !== "kamikaze") {
-        this.move = { x: -(enemy.y - me.y), y: enemy.x - me.x };
+      // в зоне видимости держим свою дистанцию и ходим боком, а не лезем вплотную
+      if (seen && !goingToPower && this.kind !== "kamikaze" && this.kind !== "sniper") {
+        const nx = dx / (dist || 1);
+        const ny = dy / (dist || 1);
+        const sx = -ny * this.strafe;
+        const sy = nx * this.strafe;
+        if (dist < this.hold * 0.75) this.move = { x: -nx * 0.8 + sx * 0.6, y: -ny * 0.8 + sy * 0.6 };
+        else if (dist > this.hold * 1.15) this.move = { x: nx + sx * 0.3, y: ny + sy * 0.3 };
+        else this.move = { x: sx, y: sy };
       }
       // снайпер держит дистанцию
       if (this.kind === "sniper" && seen && !goingToPower) {
@@ -343,19 +361,31 @@ export class Bot {
 
     let mx = this.move.x;
     let my = this.move.y;
-    const independentAim = this.kind === "sniper" || this.kind === "bouncer";
+    const independentAim = this.kind !== "kamikaze";
     if (this.dodgeFor > 0) {
       mx = this.dodgeDir.x;
       my = this.dodgeDir.y;
     } else if (this.jitterFor > 0) {
       mx = this.jitterDir.x;
       my = this.jitterDir.y;
-    } else if (!independentAim && this.kind !== "kamikaze" && seen && dist < 520) {
-      // в зоне видимости доворачиваем корпус на цель
-      mx = Math.cos(aimAng);
-      my = Math.sin(aimAng);
     }
-    const len = Math.hypot(mx, my) || 1;
+    let len = Math.hypot(mx, my) || 1;
+    mx /= len;
+    my /= len;
+    // расталкиваемся с соседями, чтобы боты не кружили друг в друге
+    for (const o of tanks) {
+      if (this.kind === "kamikaze" || !o.alive || o.id === me.id) continue;
+      const rx = me.x - o.x;
+      const ry = me.y - o.y;
+      const d = Math.hypot(rx, ry);
+      const reach = me.r + o.r + 55;
+      if (d > 0.01 && d < reach) {
+        const k = (1 - d / reach) * 1.6;
+        mx += (rx / d) * k;
+        my += (ry / d) * k;
+      }
+    }
+    len = Math.hypot(mx, my) || 1;
     mx = (mx / len) * p.speed;
     my = (my / len) * p.speed;
 
@@ -399,6 +429,6 @@ export class Bot {
       }
     }
     if (fire) this.sinceShot = 0;
-    return { ix: mx, iy: my, fire, aim: independentAim ? aimAng : undefined, charging };
+    return { ix: mx, iy: my, fire, aim: independentAim && (seen || (this.kind === "bouncer" && this.ricAim !== null)) ? aimAng : undefined, charging };
   }
 }

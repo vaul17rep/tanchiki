@@ -26,7 +26,7 @@ export const ENEMY: Record<BotKind, EnemyStat> = {
   sniper: { hp: 1, r: 17, speedMul: 0.75, fireMul: 2.2, color: "#a78bfa", dark: "#2a1f55", score: 220 },
   bouncer: { hp: 2, r: 18, speedMul: 0.85, fireMul: 1.5, color: "#4ade80", dark: "#0f3a22", score: 220 },
   kamikaze: { hp: 1, r: 16, speedMul: 1.45, fireMul: 1, color: "#f43f5e", dark: "#4c0f1c", score: 150 },
-  boss: { hp: 12, r: 31, speedMul: 0.55, fireMul: 1, color: "#e879f9", dark: "#4a1456", score: 2000 },
+  boss: { hp: 12, r: 31, speedMul: 0.55, fireMul: 2.4, color: "#e879f9", dark: "#4a1456", score: 2000 },
 };
 
 export interface WaveSpec {

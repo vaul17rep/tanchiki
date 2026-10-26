@@ -385,7 +385,7 @@ export default function App() {
   };
   const scoreLine = ui ? (ui.mode === "ffa" ? ui.scores.join(" · ") : `${ui.scores[0]} : ${ui.scores[1]}`) : "";
   const arc = ui?.arcade ?? null;
-  const showReward = phase === "reward" && !!arc?.rewards;
+  const showReward = !!arc?.rewards && phase !== "gameover";
   const showIntro = !!arc?.intro && phase === "countdown";
   const showArcadeOver = phase === "gameover" && !!arc;
 
@@ -691,27 +691,28 @@ export default function App() {
 
                 {/* ---------------- аркада: выбор улучшения ---------------- */}
                 {showReward && arc?.rewards && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/75 backdrop-blur-sm">
-                    <span className="announce-pop font-display text-3xl tracking-[0.2em] text-emerald-300 sm:text-4xl" style={{ textShadow: "0 0 30px rgba(52,211,153,.7)" }}>
-                      {t.rwTitle}
+                  <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex flex-col items-center">
+                    <span className="announce-pop font-display text-lg tracking-[0.2em] text-emerald-300 sm:text-2xl" style={{ textShadow: "0 0 24px rgba(52,211,153,.7)" }}>
+                      {t.rwTitle} · {t.rwPick}
                     </span>
-                    <span className="mt-2 text-xs uppercase tracking-[0.3em] text-slate-400">{t.rwPick}</span>
-                    <div className="mt-6 flex flex-wrap justify-center gap-4 px-4">
+                    <div className="mt-2 flex w-full justify-center gap-2 px-3 sm:gap-3">
                       {arc.rewards.map((id: RewardId, i: number) => (
                         <button
                           key={id}
                           onClick={(e) => { gameRef.current?.pickReward(i); e.currentTarget.blur(); }}
-                          className="glass group w-44 rounded-2xl p-4 text-left transition hover:-translate-y-1 hover:border-cyan-400/70"
+                          className="glass pointer-events-auto min-w-0 flex-1 rounded-xl p-2.5 text-left transition hover:-translate-y-0.5 hover:border-cyan-400/70 sm:max-w-[13rem] sm:p-3"
                         >
-                          <span className="keycap mb-2 inline-flex">{i + 1}</span>
-                          <p className="font-display text-base tracking-[0.1em] text-cyan-200">{t.rw[id].n}</p>
-                          <p className="mt-1 text-xs leading-snug text-slate-400">{t.rw[id].d}</p>
-                          {arc.upgrades[id] > 0 && (
-                            <p className="mt-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">×{arc.upgrades[id]}</p>
-                          )}
+                          <span className="flex items-center gap-2">
+                            <span className="keycap !h-5 !min-w-0 shrink-0 px-1.5 text-[10px]">{i + 1}</span>
+                            <span className="break-words font-display text-[13px] leading-tight tracking-[0.06em] text-cyan-200">{t.rw[id].n}</span>
+                          </span>
+                          <span className="mt-1 block break-words text-[11px] leading-snug text-slate-400">{t.rw[id].d}</span>
                         </button>
                       ))}
                     </div>
+                    <span className="mt-2 h-1 w-48 overflow-hidden rounded bg-slate-800">
+                      <span className="block h-full bg-emerald-300" style={{ width: `${arc.rewardPct * 100}%` }} />
+                    </span>
                   </div>
                 )}
 

@@ -24,7 +24,10 @@ import {
 
 export const W = 1280;
 export const H = 720;
-const BULLET_SPEED = 580;
+const BULLET_SPEED = 480;
+const TURN_RATE = 6.5;
+const TANK_SPEED = 195;
+const REWARD_MS = 8000;
 const BULLET_R = 5;
 const DUEL_TIME = 60;
 const CROWD_TIME = 90;
@@ -75,6 +78,7 @@ export interface ArcadeUi {
   bossHp: number;
   bossMax: number;
   rewards: RewardId[] | null;
+  rewardPct: number;
   intro: boolean;
   upgrades: Record<RewardId, number>;
 }
@@ -323,6 +327,7 @@ export class Game {
   private newBest = false;
   private overAt = -1;
   private rewardOptions: RewardId[] | null = null;
+  private rewardUntil = 0;
   private up: Record<RewardId, number> = { hp: 0, speed: 0, reload: 0, bounce: 0, shield: 0, bspeed: 0 };
 
   /* --- отрисовка и качество --- */
@@ -478,7 +483,7 @@ export class Game {
       out.fire = b(0) || b(1) || b(2) || b(3) || b(5) || b(7);
     }
     // выбор награды кнопками геймпада: A, B, X
-    if (this.phase === "reward") {
+    if (this.rewardOptions) {
       for (let k = 0; k < 3; k++) {
         const down = list.some((g) => !!g.buttons[k]?.pressed);
         if (down && !this.padPick[k]) this.pickReward(k);
@@ -523,7 +528,7 @@ export class Game {
     ) {
       e.preventDefault();
     }
-    if (this.phase === "reward" && !e.repeat) {
+    if (this.rewardOptions && !e.repeat) {
       const m = /^(?:Digit|Numpad)([1-3])$/.exec(code);
       if (m) {
         this.pickReward(Number(m[1]) - 1);
@@ -889,11 +894,11 @@ export class Game {
       let iy = inp.iy;
       const frozen = now < t.frozenUntil;
       const boost = now < t.speedUntil ? 1.49 : 1;
-      let maxSpeed = 235 * boost * t.speedMul * (frozen ? 0.5 : 1);
+      let maxSpeed = TANK_SPEED * boost * t.speedMul * (frozen ? 0.5 : 1);
       if (t.human && this.arcade) maxSpeed *= 1 + this.up.speed * 0.1;
       const dashing = now < t.dashUntil;
       if (dashing) maxSpeed *= 2.6;
-      const accel = 1550 * (dashing ? 2 : 1);
+      const accel = 1300 * (dashing ? 2 : 1);
 
       if (ix !== 0 || iy !== 0) {
         const len = Math.hypot(ix, iy);
@@ -910,7 +915,7 @@ export class Game {
           t.vy = (t.vy / sp) * cap;
         }
         const face = inp.aim !== undefined ? inp.aim : Math.atan2(iy, ix);
-        t.angle = rotToward(t.angle, face, 11 * dt);
+        t.angle = rotToward(t.angle, face, TURN_RATE * dt);
         // выхлоп ускорения
         if (Math.random() < dt * 26 * this.fxScale) {
           const bx = t.x - Math.cos(t.angle) * (t.r + 4);
@@ -926,7 +931,7 @@ export class Game {
         const k = Math.exp(-6.5 * dt);
         t.vx *= k;
         t.vy *= k;
-        if (inp.aim !== undefined) t.angle = rotToward(t.angle, inp.aim, 11 * dt);
+        if (inp.aim !== undefined) t.angle = rotToward(t.angle, inp.aim, TURN_RATE * dt);
       }
 
       t.x += t.vx * dt;
@@ -998,6 +1003,7 @@ export class Game {
     const angles = triple ? [-0.24, 0, 0.24] : [spread];
     let sp = BULLET_SPEED * nSpeed;
     if (t.kind === "sniper") sp *= 1.45;
+    if (!t.human && this.arcade) sp *= 0.9;
     if (t.human && this.arcade) sp *= 1 + this.up.bspeed * 0.15;
     for (const da of angles) {
       const a = t.angle + da;
@@ -1390,6 +1396,7 @@ export class Game {
       });
     }
     this.tanks = fresh;
+    if (spec.boss) for (const t of this.tanks) if (t.human) t.hp = t.cap;
     if (this.up.shield) for (const t of this.tanks) t.shieldUntil = now + 6000 + 2500;
 
     // стороны, с которых выходят враги
@@ -1433,6 +1440,12 @@ export class Game {
     void dt;
 
     if (now - this.lastKillAt > 3000) this.combo = 0;
+
+    // между волнами игра не стоит: выбор улучшения идёт поверх, по таймеру берётся случайное
+    if (this.rewardOptions) {
+      if (now >= this.rewardUntil) this.pickReward(Math.floor(Math.random() * this.rewardOptions.length));
+      return;
+    }
 
     // предупреждения превращаются во врагов
     for (const w of this.warns) {
@@ -1519,13 +1532,13 @@ export class Game {
       .filter((o) => o.alive && o.human)
       .sort((a, b) => Math.hypot(a.x - t.x, a.y - t.y) - Math.hypot(b.x - t.x, b.y - t.y))[0];
     if (target && now >= t.nextFan && now - t.bornAt > 800) {
-      t.nextFan = now + (frac < 0.66 ? 2600 : 3400);
+      t.nextFan = now + (frac < 0.66 ? 3600 : 4600);
       const base = Math.atan2(target.y - t.y, target.x - t.x);
       const n = frac < 0.66 ? 7 : 5;
       const keep = t.angle;
       for (let i = 0; i < n; i++) {
-        t.angle = base + (i - (n - 1) / 2) * 0.22;
-        this.fire(t, 0, 0.85, i > 0);
+        t.angle = base + (i - (n - 1) / 2) * 0.3;
+        this.fire(t, 0, 0.7, i > 0);
       }
       t.angle = keep;
     }
@@ -1586,22 +1599,21 @@ export class Game {
     this.score += 200 * this.wave;
     for (const t of this.tanks) {
       if (t.human && t.alive) {
-        t.hp = Math.min(t.cap, t.hp + 1);
-        this.addFloat(t.x, t.y - 28, "+1", "#4ade80");
+        t.hp = Math.min(t.cap, t.hp + 2);
+        this.addFloat(t.x, t.y - 28, "+2", "#4ade80");
       }
     }
     this.bullets = [];
     this.mines = [];
-    this.phase = "reward";
+    this.rewardUntil = now + REWARD_MS;
     const pool = [...REWARD_IDS].sort(() => Math.random() - 0.5);
     this.rewardOptions = pool.slice(0, 3);
-    void now;
     sound.win();
   }
 
   /** Игрок выбрал улучшение (клавиши 1–3, клик, кнопки геймпада). */
   pickReward(i: number) {
-    if (this.phase !== "reward" || !this.rewardOptions) return;
+    if (!this.rewardOptions) return;
     const id = this.rewardOptions[i];
     if (!id) return;
     this.up[id] += 1;
@@ -2146,6 +2158,7 @@ export class Game {
         bossHp: boss ? boss.hp : 0,
         bossMax: boss ? boss.maxHp : 0,
         rewards: this.rewardOptions,
+        rewardPct: this.rewardOptions ? clamp((this.rewardUntil - now) / REWARD_MS, 0, 1) : 0,
         intro: this.waveIntro,
         upgrades: { ...this.up },
       };
