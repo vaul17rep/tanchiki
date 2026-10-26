@@ -22,7 +22,7 @@ const ru = {
   diff: ["Лёгкий", "Обычный", "Сложный"],
   mapLbl: "Карта",
   mapRandom: "Случайная",
-  maps: ["Классика", "Колонны", "Лабиринт", "Поле"],
+  maps: ["Классика", "Колонны", "Лабиринт", "Ринг", "Коридор", "Крепость"],
   winLbl: "До побед",
   langLbl: "Язык",
   heal: "Ремкомплект",
@@ -56,6 +56,7 @@ const ru = {
   titleSound: "M — звук",
   titlePause: "Esc — пауза",
   fire: "ОГОНЬ",
+  toMenuHint: "пробел или Enter — в меню",
 };
 
 const en: typeof ru = {
@@ -80,7 +81,7 @@ const en: typeof ru = {
   diff: ["Easy", "Normal", "Hard"],
   mapLbl: "Map",
   mapRandom: "Random",
-  maps: ["Classic", "Pillars", "Maze", "Open field"],
+  maps: ["Classic", "Pillars", "Maze", "Ring", "Corridor", "Fortress"],
   winLbl: "First to",
   langLbl: "Language",
   heal: "Repair kit",
@@ -114,6 +115,7 @@ const en: typeof ru = {
   titleSound: "M — sound",
   titlePause: "Esc — pause",
   fire: "FIRE",
+  toMenuHint: "space or Enter — to menu",
 };
 
 export type Dict = typeof ru;

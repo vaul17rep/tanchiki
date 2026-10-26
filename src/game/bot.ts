@@ -1,5 +1,5 @@
 import type { Difficulty } from "./config";
-import type { Rect } from "./maps";
+import type { Bounds, Rect } from "./maps";
 
 /* ИИ соперника. Танк поворачивается в сторону движения, поэтому бот
    «целится» поворотом корпуса и стреляет, когда направление совпало. */
@@ -36,9 +36,7 @@ export interface BotInput {
 }
 
 interface Env {
-  W: number;
-  H: number;
-  wall: number;
+  bounds: Bounds;
   tankR: number;
   bulletSpeed: number;
   maxHp: number;
@@ -48,12 +46,12 @@ const CELL = 20;
 const TAU = Math.PI * 2;
 
 const PARAMS = [
-  // лёгкий
-  { think: 0.32, tol: 0.34, react: 0.45, err: 0.3, dodge: 0, power: 0, speed: 0.6, range: 560, lead: false },
+  // лёгкий: медленный, косой, стреляет редко, не уворачивается
+  { think: 0.5, tol: 0.5, react: 0.8, err: 0.5, dodge: 0, power: 0, speed: 0.5, range: 450, lead: false, gap: 1.3 },
   // обычный
-  { think: 0.16, tol: 0.17, react: 0.2, err: 0.12, dodge: 0.55, power: 1, speed: 0.85, range: 850, lead: false },
+  { think: 0.3, tol: 0.26, react: 0.45, err: 0.22, dodge: 0.25, power: 1, speed: 0.75, range: 700, lead: false, gap: 0.8 },
   // сложный
-  { think: 0.07, tol: 0.08, react: 0.06, err: 0.03, dodge: 1, power: 1, speed: 1, range: 1300, lead: true },
+  { think: 0.14, tol: 0.14, react: 0.22, err: 0.1, dodge: 0.6, power: 1, speed: 0.92, range: 1000, lead: false, gap: 0.5 },
 ];
 
 function angDiff(a: number, b: number) {
@@ -99,6 +97,7 @@ export class Bot {
   private move = { x: 0, y: 0 };
   private fire = false;
   private alignedFor = 0;
+  private sinceShot = 9;
   private aimErr = 0;
   private errIn = 0;
   private dodgeFor = 0;
@@ -113,15 +112,16 @@ export class Bot {
     difficulty: Difficulty
   ) {
     this.p = PARAMS[difficulty];
-    this.cols = Math.ceil(env.W / CELL);
-    this.rows = Math.ceil(env.H / CELL);
+    this.cols = Math.ceil(1280 / CELL);
+    this.rows = Math.ceil(720 / CELL);
     this.blocked = new Uint8Array(this.cols * this.rows);
     const pad = env.tankR + 3;
     for (let cy = 0; cy < this.rows; cy++) {
       for (let cx = 0; cx < this.cols; cx++) {
         const x = cx * CELL + CELL / 2;
         const y = cy * CELL + CELL / 2;
-        let b = x < env.wall + env.tankR || x > env.W - env.wall - env.tankR || y < env.wall + env.tankR || y > env.H - env.wall - env.tankR;
+        const bd = env.bounds;
+        let b = x < bd.l + env.tankR || x > bd.r - env.tankR || y < bd.t + env.tankR || y > bd.b - env.tankR;
         if (!b) {
           for (const o of obstacles) {
             if (x > o.x - pad && x < o.x + o.w + pad && y > o.y - pad && y < o.y + o.h + pad) {
@@ -193,6 +193,7 @@ export class Bot {
   update(dt: number, me: BotTank, enemy: BotTank, bullets: BotBullet[], powers: BotPower[], myIndex: number): BotInput {
     const p = this.p;
     this.errIn -= dt;
+    this.sinceShot += dt;
     if (this.errIn <= 0) {
       this.errIn = 0.6;
       this.aimErr = (Math.random() * 2 - 1) * p.err;
@@ -237,7 +238,8 @@ export class Bot {
           // выбираем сторону, где больше места
           const px = me.x + sx * 90;
           const py = me.y + sy * 90;
-          if (px < this.env.wall + 30 || px > this.env.W - this.env.wall - 30 || py < this.env.wall + 30 || py > this.env.H - this.env.wall - 30) {
+          const bd = this.env.bounds;
+          if (px < bd.l + 30 || px > bd.r - 30 || py < bd.t + 30 || py > bd.b - 30) {
             sx = -sx;
             sy = -sy;
           }
@@ -318,7 +320,8 @@ export class Bot {
     mx = (mx / len) * p.speed;
     my = (my / len) * p.speed;
 
-    this.fire = aligned && this.alignedFor >= p.react;
+    this.fire = aligned && this.alignedFor >= p.react && this.sinceShot >= p.gap;
+    if (this.fire) this.sinceShot = 0;
     return { ix: mx, iy: my, fire: this.fire };
   }
 }

@@ -318,6 +318,7 @@ export default function App() {
   const uiRef = useRef<UiState | null>(null);
   uiRef.current = ui;
 
+  const gameoverAt = useRef(0);
   const handleUi = useCallback((u: UiState) => {
     const j = JSON.stringify(u);
     if (j !== lastJson.current) {
@@ -371,12 +372,22 @@ export default function App() {
   /* ---- хоткеи уровня приложения ---- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (screen === "menu" && (e.code === "Enter" || e.code === "Space")) {
+      if (screen === "menu" && !e.repeat && (e.code === "Enter" || e.code === "Space")) {
         e.preventDefault();
         start();
       }
       if (screen === "game") {
         if (e.code === "KeyR" && uiRef.current?.phase === "gameover") rematch();
+        // после финала пробел или Enter ведут в меню (с задержкой, чтобы не ловить зажатую кнопку огня)
+        if (
+          (e.code === "Space" || e.code === "Enter") &&
+          !e.repeat &&
+          uiRef.current?.phase === "gameover" &&
+          performance.now() - gameoverAt.current > 700
+        ) {
+          e.preventDefault();
+          toMenu();
+        }
         if (e.code === "KeyM") {
           sound.init();
           setMuted((m) => {
@@ -388,7 +399,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [screen, start, rematch]);
+  }, [screen, start, rematch, toMenu]);
 
   /* ---- автопауза при скрытии вкладки ---- */
   useEffect(() => {
@@ -430,6 +441,8 @@ export default function App() {
   };
 
   const phase = ui?.phase;
+  if (phase === "gameover" && gameoverAt.current === 0) gameoverAt.current = performance.now();
+  if (phase !== "gameover") gameoverAt.current = 0;
   const showCountdown = phase === "countdown" && ui && ui.countdown > 0;
   const showGo = ui?.countdown === 0 && phase === "play";
   const showRoundOver = phase === "roundover" && ui;
@@ -515,7 +528,7 @@ export default function App() {
 
             {/* карточки управления */}
             <div className={cn("fade-up mt-5 grid w-full gap-4", !botMode && "sm:grid-cols-2")} style={{ animationDelay: "0.35s" }}>
-              <PlayerCard t={t} side="left" title={`${t.player} 1`} color="cyan" moveKeys={["W", "A", "S", "D"]} fireLabel="F" />
+              <PlayerCard t={t} side="left" title={`${t.player} 1`} color="cyan" moveKeys={["W", "A", "S", "D"]} fireLabel="SPACE" />
               {!botMode && (
                 <PlayerCard t={t} side="right" title={`${t.player} 2`} color="pink" moveKeys={["↑", "←", "↓", "→"]} fireLabel="ENTER" />
               )}
@@ -692,6 +705,7 @@ export default function App() {
                         {t.menu}
                       </button>
                     </div>
+                    <span className="fade-up mt-5 text-[11px] uppercase tracking-[0.25em] text-slate-500">{t.toMenuHint}</span>
                   </div>
                 )}
 

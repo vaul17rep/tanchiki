@@ -1,7 +1,7 @@
 import { sound } from "./audio";
 import { Bot } from "./bot";
 import type { GameConfig } from "./config";
-import { MAPS, MAP_COUNT, type Rect } from "./maps";
+import { MAPS, MAP_COUNT, type Bounds, type Rect } from "./maps";
 
 /* ================================================================== */
 /*  NEON DUEL — движок арены                                          */
@@ -9,7 +9,6 @@ import { MAPS, MAP_COUNT, type Rect } from "./maps";
 
 export const W = 1280;
 export const H = 720;
-const WALL = 40;
 const TANK_R = 18;
 const MAX_HP = 3;
 const CAP_HP = 5;
@@ -162,6 +161,8 @@ export class Game {
 
   private cfg: GameConfig;
   private obstacles: Rect[];
+  private bounds: Bounds;
+  private spawns: [{ x: number; y: number }, { x: number; y: number }];
   private bot: Bot | null = null;
   /** ввод с экрана (виртуальные стики) и с геймпадов, по игрокам */
   private touch: PadInput[] = [{ x: 0, y: 0, fire: false }, { x: 0, y: 0, fire: false }];
@@ -199,10 +200,13 @@ export class Game {
     this.cfg = cfg;
 
     const mapIdx = cfg.map >= 0 && cfg.map < MAP_COUNT ? cfg.map : Math.floor(Math.random() * MAP_COUNT);
-    this.obstacles = MAPS[mapIdx];
+    const map = MAPS[mapIdx];
+    this.obstacles = map.obstacles;
+    this.bounds = map.bounds;
+    this.spawns = map.spawns;
     if (cfg.mode === "bot") {
       this.bot = new Bot(
-        { W, H, wall: WALL, tankR: TANK_R, bulletSpeed: BULLET_SPEED, maxHp: CAP_HP },
+        { bounds: this.bounds, tankR: TANK_R, bulletSpeed: BULLET_SPEED, maxHp: CAP_HP },
         this.obstacles,
         cfg.difficulty
       );
@@ -291,7 +295,7 @@ export class Game {
 
   private readInput(i: number): { ix: number; iy: number; fire: boolean } {
     const k = i === 0
-      ? { l: "KeyA", r: "KeyD", u: "KeyW", d: "KeyS", f: ["KeyF", "Space"] }
+      ? { l: "KeyA", r: "KeyD", u: "KeyW", d: "KeyS", f: ["Space"] }
       : { l: "ArrowLeft", r: "ArrowRight", u: "ArrowUp", d: "ArrowDown", f: ["Enter"] };
     // против бота обе раскладки управляют единственным игроком
     const both = this.bot && i === 0;
@@ -344,10 +348,10 @@ export class Game {
   private makeTank(i: number): Tank {
     const p1 = i === 0;
     return {
-      x: p1 ? 118 : W - 118,
-      y: H / 2,
-      spawnX: p1 ? 118 : W - 118,
-      spawnY: H / 2,
+      x: this.spawns[i].x,
+      y: this.spawns[i].y,
+      spawnX: this.spawns[i].x,
+      spawnY: this.spawns[i].y,
       angle: p1 ? 0 : Math.PI,
       vx: 0,
       vy: 0,
@@ -516,8 +520,9 @@ export class Game {
       t.y += t.vy * dt;
 
       // стены
-      t.x = clamp(t.x, WALL + TANK_R, W - WALL - TANK_R);
-      t.y = clamp(t.y, WALL + TANK_R, H - WALL - TANK_R);
+      const bd = this.bounds;
+      t.x = clamp(t.x, bd.l + TANK_R, bd.r - TANK_R);
+      t.y = clamp(t.y, bd.t + TANK_R, bd.b - TANK_R);
 
       // препятствия
       for (const o of this.obstacles) this.pushCircleOut(t, TANK_R, o);
@@ -626,10 +631,11 @@ export class Game {
       let bounced = false;
 
       // стены
-      if (b.x < WALL + BULLET_R) { b.x = WALL + BULLET_R; b.vx = Math.abs(b.vx); bounced = true; }
-      else if (b.x > W - WALL - BULLET_R) { b.x = W - WALL - BULLET_R; b.vx = -Math.abs(b.vx); bounced = true; }
-      if (b.y < WALL + BULLET_R) { b.y = WALL + BULLET_R; b.vy = Math.abs(b.vy); bounced = true; }
-      else if (b.y > H - WALL - BULLET_R) { b.y = H - WALL - BULLET_R; b.vy = -Math.abs(b.vy); bounced = true; }
+      const bd = this.bounds;
+      if (b.x < bd.l + BULLET_R) { b.x = bd.l + BULLET_R; b.vx = Math.abs(b.vx); bounced = true; }
+      else if (b.x > bd.r - BULLET_R) { b.x = bd.r - BULLET_R; b.vx = -Math.abs(b.vx); bounced = true; }
+      if (b.y < bd.t + BULLET_R) { b.y = bd.t + BULLET_R; b.vy = Math.abs(b.vy); bounced = true; }
+      else if (b.y > bd.b - BULLET_R) { b.y = bd.b - BULLET_R; b.vy = -Math.abs(b.vy); bounced = true; }
 
       // препятствия
       for (const o of this.obstacles) {
@@ -761,8 +767,8 @@ export class Game {
     const type = types[Math.floor(Math.random() * types.length)];
 
     for (let tries = 0; tries < 60; tries++) {
-      const x = rand(WALL + 70, W - WALL - 70);
-      const y = rand(WALL + 60, H - WALL - 60);
+      const x = rand(this.bounds.l + 70, this.bounds.r - 70);
+      const y = rand(this.bounds.t + 50, this.bounds.b - 50);
       let ok = true;
       for (const o of this.obstacles) {
         if (x > o.x - 34 && x < o.x + o.w + 34 && y > o.y - 34 && y < o.y + o.h + 34) { ok = false; break; }
@@ -894,8 +900,9 @@ export class Game {
     ctx.strokeStyle = "rgba(103, 232, 249, 0.05)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let x = WALL; x <= W - WALL; x += 40) { ctx.moveTo(x, WALL); ctx.lineTo(x, H - WALL); }
-    for (let y = WALL; y <= H - WALL; y += 40) { ctx.moveTo(WALL, y); ctx.lineTo(W - WALL, y); }
+    const gb = this.bounds;
+    for (let x = gb.l; x <= gb.r; x += 40) { ctx.moveTo(x, gb.t); ctx.lineTo(x, gb.b); }
+    for (let y = gb.t; y <= gb.b; y += 40) { ctx.moveTo(gb.l, y); ctx.lineTo(gb.r, y); }
     ctx.stroke();
     ctx.restore();
 
@@ -967,6 +974,16 @@ export class Game {
 
     ctx.restore(); // конец тряски
 
+    // за пределами поля (на малых картах) всё затемняем
+    const wb = this.bounds;
+    ctx.save();
+    ctx.fillStyle = "#05060f";
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    ctx.rect(wb.l - 6, wb.t - 6, wb.r - wb.l + 12, wb.b - wb.t + 12);
+    ctx.fill("evenodd");
+    ctx.restore();
+
     // стены арены (поверх всего)
     const wallGrad = ctx.createLinearGradient(0, 0, W, 0);
     wallGrad.addColorStop(0, "#22d3ee");
@@ -977,11 +994,11 @@ export class Game {
     ctx.lineWidth = 2.5;
     ctx.shadowColor = "#7c3aed";
     ctx.shadowBlur = 16;
-    rr(ctx, WALL - 6, WALL - 6, W - (WALL - 6) * 2, H - (WALL - 6) * 2, 16);
+    rr(ctx, wb.l - 6, wb.t - 6, wb.r - wb.l + 12, wb.b - wb.t + 12, 16);
     ctx.stroke();
     ctx.globalAlpha = 0.25;
     ctx.lineWidth = 1;
-    rr(ctx, WALL - 12, WALL - 12, W - (WALL - 12) * 2, H - (WALL - 12) * 2, 20);
+    rr(ctx, wb.l - 12, wb.t - 12, wb.r - wb.l + 24, wb.b - wb.t + 24, 20);
     ctx.stroke();
     ctx.restore();
   }
