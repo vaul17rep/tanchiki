@@ -5,6 +5,10 @@ import { platform } from "./platform";
 export interface Settings {
   lang: Lang;
   mode: Mode;
+  players: 1 | 2;
+  /** боты в отряде и «все против всех» */
+  bots: number;
+  friendlyFire: boolean;
   difficulty: Difficulty;
   map: number; // -1 = случайная
   winScore: number;
@@ -24,12 +28,15 @@ function detectLang(): Lang {
 }
 
 export function loadSettings(): Settings {
-  const base: Settings = { lang: detectLang(), mode: "pvp", difficulty: 1, map: 0, winScore: 3, muted: false };
+  const base: Settings = { lang: detectLang(), mode: "duel", players: 2, bots: 3, friendlyFire: false, difficulty: 1, map: 0, winScore: 3, muted: false };
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
-      const s = JSON.parse(raw) as Partial<Settings>;
-      const merged = { ...base, ...s };
+      const s = JSON.parse(raw) as Omit<Partial<Settings>, "mode"> & { mode?: string };
+      // старые сохранения: режимы «pvp» и «bot» стали дуэлью на двоих и на одного
+      if (s.mode === "pvp") Object.assign(s, { mode: "duel", players: 2 });
+      else if (s.mode === "bot") Object.assign(s, { mode: "duel", players: 1 });
+      const merged = { ...base, ...s } as Settings;
       // язык от площадки важнее сохранённого
       const pl = platform.getLang();
       if (pl) merged.lang = pl;

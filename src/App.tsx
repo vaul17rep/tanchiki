@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Crosshair,
   HeartPulse,
   Home,
   Pause,
   Play,
   RotateCcw,
   Shield,
+  Snowflake,
   Swords,
   Volume2,
   VolumeX,
+  Waves,
   Wind,
   Zap,
 } from "lucide-react";
@@ -16,6 +19,8 @@ import { Game, type UiState } from "./game/engine";
 import { sound } from "./game/audio";
 import { MAP_COUNT } from "./game/maps";
 import type { Difficulty, GameConfig, Mode } from "./game/config";
+import { Hud, teamColor, teamName } from "./components/Hud";
+import type { RewardId } from "./game/arcade";
 import { DICTS, type Dict, type Lang } from "./i18n";
 import { loadSettings, saveSettings, type Settings } from "./settings";
 import { platform } from "./platform";
@@ -119,15 +124,21 @@ function PlayerCard({
 
 function PowerLegend({ t }: { t: Dict }) {
   const items = [
-    { icon: HeartPulse, name: t.heal, desc: t.healD, color: "#4ade80" },
-    { icon: Shield, name: t.shield, desc: t.shieldD, color: "#60a5fa" },
-    { icon: Zap, name: t.rapid, desc: t.rapidD, color: "#fbbf24" },
-    { icon: Wind, name: t.speed, desc: t.speedD, color: "#c084fc" },
+    { icon: HeartPulse, name: t.heal, desc: t.healD, color: "#4ade80", rare: false },
+    { icon: Shield, name: t.shield, desc: t.shieldD, color: "#60a5fa", rare: false },
+    { icon: Zap, name: t.rapid, desc: t.rapidD, color: "#fbbf24", rare: false },
+    { icon: Wind, name: t.speed, desc: t.speedD, color: "#c084fc", rare: false },
+    { icon: Crosshair, name: t.tripleName, desc: t.tripleD, color: "#fcd34d", rare: true },
+    { icon: Snowflake, name: t.freezeName, desc: t.freezeD, color: "#7dd3fc", rare: true },
+    { icon: Waves, name: t.shockName, desc: t.shockD, color: "#fda4af", rare: true },
   ];
   return (
     <div className="flex flex-wrap items-center justify-center gap-3">
-      {items.map(({ icon: Icon, name, desc, color }) => (
-        <div key={name} className="glass flex items-center gap-2.5 rounded-full py-1.5 pl-2 pr-4">
+      {items.map(({ icon: Icon, name, desc, color, rare }) => (
+        <div
+          key={name}
+          className={cn("glass flex items-center gap-2.5 rounded-full py-1.5 pl-2 pr-4", rare && "!border-yellow-300/50")}
+        >
           <span
             className="flex h-7 w-7 items-center justify-center rounded-full"
             style={{ backgroundColor: `${color}22`, color, boxShadow: `0 0 14px ${color}55` }}
@@ -138,106 +149,6 @@ function PowerLegend({ t }: { t: Dict }) {
           <span className="text-[10px] text-slate-500">{desc}</span>
         </div>
       ))}
-    </div>
-  );
-}
-
-/* ================================================================ */
-/*  HUD                                                              */
-/* ================================================================ */
-
-function HpBar({ hp, max, color, mirrored }: { hp: number; max: number; color: "cyan" | "pink"; mirrored?: boolean }) {
-  return (
-    <div className={cn("flex gap-1", mirrored && "flex-row-reverse")}>
-      {Array.from({ length: max }).map((_, i) => (
-        <span
-          key={i}
-          className={cn(
-            "hp-slot",
-            i < hp && (color === "cyan" ? "hp-on-cyan" : "hp-on-pink"),
-            mirrored && "scale-x-[-1]"
-          )}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ScorePips({ score, total, label, color, mirrored }: { score: number; total: number; label: string; color: "cyan" | "pink"; mirrored?: boolean }) {
-  return (
-    <div className={cn("flex items-center gap-1.5", mirrored && "flex-row-reverse")}>
-      {Array.from({ length: total }).map((_, i) => (
-        <span
-          key={i}
-          className="score-pip"
-          style={
-            i < score
-              ? {
-                  backgroundColor: color === "cyan" ? "#22d3ee" : "#f472b6",
-                  borderColor: "transparent",
-                  boxShadow: `0 0 10px ${color === "cyan" ? "#22d3ee" : "#f472b6"}`,
-                }
-              : undefined
-          }
-        />
-      ))}
-      <span className="ml-1 text-[9px] uppercase tracking-[0.18em] text-slate-500">{label}</span>
-    </div>
-  );
-}
-
-function FxChips({ fx, t }: { fx: UiState["fx"][number]; t: Dict }) {
-  return (
-    <div className="flex h-6 items-center gap-1.5">
-      {fx.shield && (
-        <span className="fx-chip border-blue-400/50 bg-blue-400/10 text-blue-300">
-          <Shield className="h-3 w-3" /> {t.fxShield} {fx.shieldLeft}
-        </span>
-      )}
-      {fx.rapidLeft > 0 && (
-        <span className="fx-chip border-amber-400/50 bg-amber-400/10 text-amber-300">
-          <Zap className="h-3 w-3" /> {t.fxRapid} {fx.rapidLeft}
-        </span>
-      )}
-      {fx.speedLeft > 0 && (
-        <span className="fx-chip border-purple-400/50 bg-purple-400/10 text-purple-300">
-          <Wind className="h-3 w-3" /> {fx.speedLeft}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function PlayerHud({
-  ui,
-  t,
-  name,
-  idx,
-  mirrored,
-}: {
-  ui: UiState;
-  t: Dict;
-  name: string;
-  idx: 0 | 1;
-  mirrored?: boolean;
-}) {
-  const color = idx === 0 ? "cyan" : "pink";
-  return (
-    <div className={cn("pointer-events-none flex w-[32%] flex-col gap-1.5", mirrored && "items-end")}>
-      <div className={cn("flex items-center gap-3", mirrored && "flex-row-reverse")}>
-        <span
-          className={cn(
-            "whitespace-nowrap font-display text-sm tracking-[0.2em]",
-            color === "cyan" ? "text-cyan-300" : "text-pink-300"
-          )}
-          style={{ textShadow: `0 0 14px ${color === "cyan" ? "#22d3ee88" : "#f472b688"}` }}
-        >
-          {name}
-        </span>
-        <HpBar hp={ui.hp[idx]} max={ui.maxHp} color={color} mirrored={mirrored} />
-      </div>
-      <ScorePips score={ui.scores[idx]} total={ui.winScore} label={t.rounds} color={color} mirrored={mirrored} />
-      <FxChips fx={ui.fx[idx]} t={t} />
     </div>
   );
 }
@@ -294,6 +205,8 @@ export default function App() {
     () => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches
   );
   const t = DICTS[settings.lang];
+  const modeNames: Record<Mode, string> = { duel: t.modeDuel, squad: t.modeSquad, ffa: t.modeFfa, arcade: t.modeArcade };
+  const modeHints: Record<Mode, string> = { duel: t.hintDuel, squad: t.hintSquad, ffa: t.hintFfa, arcade: t.hintArcade };
   useEffect(() => {
     setSettings((s) => {
       if (s.muted === muted) return s;
@@ -302,7 +215,11 @@ export default function App() {
       return n;
     });
   }, [muted]);
-  const botMode = settings.mode === "bot";
+  const mode = settings.mode;
+  const arcadeMode = mode === "arcade";
+  const hasBots = mode !== "duel" || settings.players === 1;
+  const manyBots = mode === "squad" || mode === "ffa";
+  const showFf = mode === "squad" || (arcadeMode && settings.players === 2);
 
   const patch = useCallback((p: Partial<Settings>) => {
     setSettings((s) => {
@@ -354,10 +271,23 @@ export default function App() {
     lastJson.current = "";
     const cfg: GameConfig = {
       mode: settings.mode,
+      players: settings.players,
+      bots: settings.bots,
+      friendlyFire: showFf && settings.friendlyFire,
       difficulty: settings.difficulty,
+      startWave: Number(new URLSearchParams(window.location.search).get("wave")) || 1,
       map: settings.map,
       winScore: settings.winScore,
-      texts: { block: t.fxBlock, shield: t.fxShield, rapid: t.fxRapid, speed: t.fxSpeed },
+      texts: {
+        block: t.fxBlock,
+        shield: t.fxShield,
+        rapid: t.fxRapid,
+        speed: t.fxSpeed,
+        triple: t.fxTriple,
+        freeze: t.fxFreeze,
+        shock: t.fxShock,
+        combo: t.fxCombo,
+      },
     };
     const game = new Game(canvasRef.current, cfg, handleUi);
     gameRef.current = game;
@@ -446,10 +376,18 @@ export default function App() {
   const showCountdown = phase === "countdown" && ui && ui.countdown > 0;
   const showGo = ui?.countdown === 0 && phase === "play";
   const showRoundOver = phase === "roundover" && ui;
-  const showGameOver = phase === "gameover" && ui;
+  const showGameOver = phase === "gameover" && ui && !ui.arcade;
   const showPause = ui?.paused && phase !== "gameover";
-  const winnerName = (idx: number) => (idx === 1 && botMode ? t.bot : `${t.player} ${idx + 1}`);
-  const winnerColor = (idx: number) => (idx === 0 ? "text-cyan-300 neon-cyan" : "text-pink-300 neon-pink");
+  const winnerName = (team: number) => (ui ? teamName(ui, team, t) : "");
+  const winnerStyle = (team: number) => {
+    const c = ui ? teamColor(ui, team) : "#e2e8f0";
+    return { color: c, textShadow: `0 0 28px ${c}, 0 0 70px ${c}88` };
+  };
+  const scoreLine = ui ? (ui.mode === "ffa" ? ui.scores.join(" · ") : `${ui.scores[0]} : ${ui.scores[1]}`) : "";
+  const arc = ui?.arcade ?? null;
+  const showReward = phase === "reward" && !!arc?.rewards;
+  const showIntro = !!arc?.intro && phase === "countdown";
+  const showArcadeOver = phase === "gameover" && !!arc;
 
   return (
     <div className="stage-bg relative flex h-screen w-screen flex-col items-center justify-center overflow-hidden">
@@ -465,7 +403,8 @@ export default function App() {
             <div className="fade-up glass flex items-center gap-2 rounded-full px-4 py-1.5" style={{ animationDelay: "0.05s" }}>
               <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-400" />
               <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">
-                {botMode ? t.badgeBot : t.badgePvp} · {t.toWin.replace("{n}", String(settings.winScore))}
+                {modeNames[mode]} · {settings.players === 1 ? t.players1 : t.players2}
+                {!arcadeMode && ` · ${t.toWin.replace("{n}", String(settings.winScore))}`}
               </span>
             </div>
 
@@ -485,14 +424,39 @@ export default function App() {
             <div className="fade-up glass mt-5 grid w-full max-w-3xl gap-x-6 gap-y-3 rounded-2xl p-4 sm:grid-cols-2" style={{ animationDelay: "0.3s" }}>
               <Segmented
                 label={t.modeLbl}
-                value={settings.mode}
-                options={[
-                  { v: "pvp", label: t.modePvp },
-                  { v: "bot", label: t.modeBot },
-                ]}
+                value={mode}
+                options={(["duel", "squad", "ffa", "arcade"] as Mode[]).map((m) => ({ v: m, label: modeNames[m] }))}
                 onChange={(v) => patch({ mode: v as Mode })}
               />
-              {botMode && (
+              <Segmented
+                label={t.playersLbl}
+                value={String(settings.players)}
+                options={[
+                  { v: "1", label: t.players1 },
+                  { v: "2", label: t.players2 },
+                ]}
+                onChange={(v) => patch({ players: Number(v) as 1 | 2 })}
+              />
+              {manyBots && (
+                <Segmented
+                  label={t.botsLbl}
+                  value={String(settings.bots)}
+                  options={[3, 5].map((n) => ({ v: String(n), label: String(n) }))}
+                  onChange={(v) => patch({ bots: Number(v) })}
+                />
+              )}
+              {showFf && (
+                <Segmented
+                  label={t.ffLbl}
+                  value={settings.friendlyFire ? "1" : "0"}
+                  options={[
+                    { v: "0", label: t.ffOff },
+                    { v: "1", label: t.ffOn },
+                  ]}
+                  onChange={(v) => patch({ friendlyFire: v === "1" })}
+                />
+              )}
+              {hasBots && (
                 <Segmented
                   label={t.diffLbl}
                   value={String(settings.difficulty)}
@@ -500,21 +464,25 @@ export default function App() {
                   onChange={(v) => patch({ difficulty: Number(v) as Difficulty })}
                 />
               )}
-              <Segmented
-                label={t.mapLbl}
-                value={String(settings.map)}
-                options={[
-                  ...t.maps.slice(0, MAP_COUNT).map((m, i) => ({ v: String(i), label: m })),
-                  { v: "-1", label: t.mapRandom },
-                ]}
-                onChange={(v) => patch({ map: Number(v) })}
-              />
-              <Segmented
-                label={t.winLbl}
-                value={String(settings.winScore)}
-                options={[3, 5, 7].map((n) => ({ v: String(n), label: String(n) }))}
-                onChange={(v) => patch({ winScore: Number(v) })}
-              />
+              {!arcadeMode && (
+                <Segmented
+                  label={t.mapLbl}
+                  value={String(settings.map)}
+                  options={[
+                    ...t.maps.slice(0, MAP_COUNT).map((m, i) => ({ v: String(i), label: m })),
+                    { v: "-1", label: t.mapRandom },
+                  ]}
+                  onChange={(v) => patch({ map: Number(v) })}
+                />
+              )}
+              {!arcadeMode && (
+                <Segmented
+                  label={t.winLbl}
+                  value={String(settings.winScore)}
+                  options={[3, 5, 7].map((n) => ({ v: String(n), label: String(n) }))}
+                  onChange={(v) => patch({ winScore: Number(v) })}
+                />
+              )}
               <Segmented
                 label={t.langLbl}
                 value={settings.lang}
@@ -526,10 +494,14 @@ export default function App() {
               />
             </div>
 
+            <p className="fade-up mt-3 max-w-2xl text-center text-xs leading-relaxed text-slate-400" style={{ animationDelay: "0.32s" }}>
+              {modeHints[mode]} {t.wallsHint}.
+            </p>
+
             {/* карточки управления */}
-            <div className={cn("fade-up mt-5 grid w-full gap-4", !botMode && "sm:grid-cols-2")} style={{ animationDelay: "0.35s" }}>
+            <div className={cn("fade-up mt-4 grid w-full gap-4", settings.players === 2 && "sm:grid-cols-2")} style={{ animationDelay: "0.35s" }}>
               <PlayerCard t={t} side="left" title={`${t.player} 1`} color="cyan" moveKeys={["W", "A", "S", "D"]} fireLabel="SPACE" />
-              {!botMode && (
+              {settings.players === 2 && (
                 <PlayerCard t={t} side="right" title={`${t.player} 2`} color="pink" moveKeys={["↑", "←", "↓", "→"]} fireLabel="ENTER" />
               )}
             </div>
@@ -574,34 +546,7 @@ export default function App() {
                 <div className="vignette pointer-events-none absolute inset-0" />
 
                 {/* ---------------- HUD ---------------- */}
-                {ui && (
-                  <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between px-5 pt-4 sm:px-7">
-                    <PlayerHud ui={ui} t={t} name={`${t.player} 1`} idx={0} />
-                    <div className="flex flex-col items-center">
-                      <span
-                        className={cn(
-                          "font-display text-3xl tabular-nums text-slate-100",
-                          ui.timeSec <= 10 && !ui.suddenDeath && "timer-low"
-                        )}
-                        style={{ textShadow: "0 0 18px rgba(148,163,184,.4)" }}
-                      >
-                        {ui.suddenDeath
-                          ? "— : —"
-                          : `${Math.floor(ui.timeSec / 60)}:${String(ui.timeSec % 60).padStart(2, "0")}`}
-                      </span>
-                      {ui.suddenDeath ? (
-                        <span className="sudden-blink font-display text-[13px] tracking-[0.22em] text-red-400" style={{ textShadow: "0 0 16px rgba(248,113,113,.7)" }}>
-                          {t.suddenDeath}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                          {t.round} {ui.round}
-                        </span>
-                      )}
-                    </div>
-                    <PlayerHud ui={ui} t={t} name={botMode ? t.bot : `${t.player} 2`} idx={1} mirrored />
-                  </div>
-                )}
+                {ui && <Hud ui={ui} t={t} />}
 
                 {/* кнопки звука/паузы */}
                 <div className="absolute bottom-4 right-5 flex gap-2">
@@ -661,19 +606,28 @@ export default function App() {
                 )}
 
                 {/* ---------------- конец раунда ---------------- */}
-                {showRoundOver && ui.roundWinner >= 0 && ui.winner < 0 && (
+                {showRoundOver && ui.winner < 0 && !ui.arcade && (
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-slate-950/40">
-                    <span
-                      key={`${ui.round}-${ui.roundWinner}`}
-                      className={cn("announce-pop font-display text-4xl sm:text-5xl", winnerColor(ui.roundWinner))}
-                    >
-                      {winnerName(ui.roundWinner)}
-                    </span>
-                    <span className="fade-up mt-2 font-display text-lg tracking-[0.3em] text-slate-300">
-                      {t.takesRound}
-                    </span>
+                    {ui.roundWinner >= 0 ? (
+                      <>
+                        <span
+                          key={`${ui.round}-${ui.roundWinner}`}
+                          className="announce-pop font-display text-4xl sm:text-5xl"
+                          style={winnerStyle(ui.roundWinner)}
+                        >
+                          {winnerName(ui.roundWinner)}
+                        </span>
+                        <span className="fade-up mt-2 font-display text-lg tracking-[0.3em] text-slate-300">
+                          {t.takesRound}
+                        </span>
+                      </>
+                    ) : (
+                      <span key={ui.round} className="announce-pop font-display text-4xl text-slate-200 sm:text-5xl">
+                        {t.roundDraw}
+                      </span>
+                    )}
                     <span className="mt-4 text-xs uppercase tracking-[0.3em] text-slate-500">
-                      {t.scoreWord} {ui.scores[0]} : {ui.scores[1]}
+                      {t.scoreWord} {scoreLine}
                     </span>
                   </div>
                 )}
@@ -684,15 +638,97 @@ export default function App() {
                     <span className="fade-up text-[11px] uppercase tracking-[0.45em] text-slate-400">
                       {t.matchWin}
                     </span>
-                    <span
-                      className={cn("announce-pop mt-3 font-display text-6xl sm:text-8xl", winnerColor(ui.winner))}
-                    >
+                    <span className="announce-pop mt-3 font-display text-6xl sm:text-8xl" style={winnerStyle(ui.winner)}>
                       {winnerName(ui.winner)}
                     </span>
                     <span className="fade-up mt-3 font-display text-xl tracking-[0.35em] text-slate-300">
-                      {ui.scores[0]} : {ui.scores[1]}
+                      {scoreLine}
                     </span>
                     <div className="fade-up mt-10 flex gap-4" style={{ animationDelay: "0.35s" }}>
+                      <button onClick={(e) => { rematch(); e.currentTarget.blur(); }} className="btn-battle flex items-center gap-2.5 rounded-2xl px-9 py-3.5 text-white">
+                        <RotateCcw className="h-5 w-5" />
+                        {t.rematch} <span className="opacity-60">[R]</span>
+                      </button>
+                      <button
+                        onClick={(e) => { toMenu(); e.currentTarget.blur(); }}
+                        className="btn-ghost flex items-center gap-2.5 rounded-2xl px-7 py-3.5 font-display tracking-[0.12em] text-slate-300"
+                      >
+                        <Home className="h-5 w-5" />
+                        {t.menu}
+                      </button>
+                    </div>
+                    <span className="fade-up mt-5 text-[11px] uppercase tracking-[0.25em] text-slate-500">{t.toMenuHint}</span>
+                  </div>
+                )}
+
+                {/* ---------------- аркада: заставка волны ---------------- */}
+                {showIntro && arc && (
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    {arc.boss && (
+                      <span className="announce-pop mb-2 font-display text-2xl tracking-[0.4em] text-fuchsia-400" style={{ textShadow: "0 0 30px rgba(232,121,249,.9)" }}>
+                        {t.bossWave}
+                      </span>
+                    )}
+                    <span
+                      key={arc.wave}
+                      className="announce-pop font-display text-6xl tracking-[0.12em] text-slate-100 sm:text-7xl"
+                      style={{ textShadow: "0 0 40px rgba(167,139,250,.8), 0 0 120px rgba(167,139,250,.5)" }}
+                    >
+                      {t.wave} {arc.wave}
+                    </span>
+                    {arc.special && (
+                      <>
+                        <span className="fade-up mt-3 font-display text-xl tracking-[0.25em] text-amber-300">
+                          {t.specialName[arc.special]}
+                        </span>
+                        <span className="fade-up mt-1 text-xs uppercase tracking-[0.25em] text-slate-400">
+                          {t.specialDesc[arc.special]}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* ---------------- аркада: выбор улучшения ---------------- */}
+                {showReward && arc?.rewards && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/75 backdrop-blur-sm">
+                    <span className="announce-pop font-display text-3xl tracking-[0.2em] text-emerald-300 sm:text-4xl" style={{ textShadow: "0 0 30px rgba(52,211,153,.7)" }}>
+                      {t.rwTitle}
+                    </span>
+                    <span className="mt-2 text-xs uppercase tracking-[0.3em] text-slate-400">{t.rwPick}</span>
+                    <div className="mt-6 flex flex-wrap justify-center gap-4 px-4">
+                      {arc.rewards.map((id: RewardId, i: number) => (
+                        <button
+                          key={id}
+                          onClick={(e) => { gameRef.current?.pickReward(i); e.currentTarget.blur(); }}
+                          className="glass group w-44 rounded-2xl p-4 text-left transition hover:-translate-y-1 hover:border-cyan-400/70"
+                        >
+                          <span className="keycap mb-2 inline-flex">{i + 1}</span>
+                          <p className="font-display text-base tracking-[0.1em] text-cyan-200">{t.rw[id].n}</p>
+                          <p className="mt-1 text-xs leading-snug text-slate-400">{t.rw[id].d}</p>
+                          {arc.upgrades[id] > 0 && (
+                            <p className="mt-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">×{arc.upgrades[id]}</p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ---------------- аркада: конец игры ---------------- */}
+                {showArcadeOver && arc && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/70 backdrop-blur-[2px]">
+                    <span className="fade-up text-[11px] uppercase tracking-[0.45em] text-slate-400">{t.arcadeOver}</span>
+                    <span className="announce-pop mt-3 font-display text-5xl text-slate-100 sm:text-7xl" style={{ textShadow: "0 0 40px rgba(167,139,250,.7)" }}>
+                      {arc.score.toLocaleString()}
+                    </span>
+                    {arc.newBest && (
+                      <span className="fade-up mt-2 font-display text-lg tracking-[0.3em] text-amber-300">{t.newRecord}</span>
+                    )}
+                    <span className="fade-up mt-3 text-xs uppercase tracking-[0.3em] text-slate-400">
+                      {t.reachedWave} {arc.wave} · {arc.kills} {t.killsWord} · {t.bestWord} {arc.best.score.toLocaleString()}
+                    </span>
+                    <div className="fade-up mt-8 flex gap-4" style={{ animationDelay: "0.35s" }}>
                       <button onClick={(e) => { rematch(); e.currentTarget.blur(); }} className="btn-battle flex items-center gap-2.5 rounded-2xl px-9 py-3.5 text-white">
                         <RotateCcw className="h-5 w-5" />
                         {t.rematch} <span className="opacity-60">[R]</span>
@@ -744,7 +780,7 @@ export default function App() {
           </div>
           {touchMode && (
             <TouchControls
-              twoPlayers={!botMode}
+              twoPlayers={settings.players === 2}
               fireLabel={t.fire}
               onInput={(p, x, y, f) => gameRef.current?.setTouch(p, x, y, f)}
             />

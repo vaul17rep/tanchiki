@@ -1,17 +1,25 @@
 import type { Difficulty } from "./config";
-import type { Bounds, Rect } from "./maps";
+import type { Nav } from "./nav";
 
-/* ИИ соперника. Танк поворачивается в сторону движения, поэтому бот
-   «целится» поворотом корпуса и стреляет, когда направление совпало. */
+/* ИИ ботов. Танк поворачивается в сторону движения, поэтому обычный бот
+   «целится» поворотом корпуса и стреляет, когда направление совпало.
+   Особые враги аркады (снайпер, рикошетчик) целятся независимо от движения. */
+
+export type BotKind = "normal" | "scout" | "heavy" | "sniper" | "bouncer" | "kamikaze" | "boss";
 
 export interface BotTank {
+  id: number;
+  team: number;
   x: number;
   y: number;
   angle: number;
   vx: number;
   vy: number;
   hp: number;
+  maxHp: number;
   alive: boolean;
+  r: number;
+  human: boolean;
 }
 
 export interface BotBullet {
@@ -19,7 +27,8 @@ export interface BotBullet {
   y: number;
   vx: number;
   vy: number;
-  owner: number;
+  team: number;
+  ownerId: number;
   alive: boolean;
 }
 
@@ -33,25 +42,21 @@ export interface BotInput {
   ix: number;
   iy: number;
   fire: boolean;
+  /** куда повернуть корпус независимо от движения (снайпер, рикошетчик) */
+  aim?: number;
+  /** снайпер заряжает выстрел: движок рисует лазерный прицел */
+  charging?: boolean;
 }
 
-interface Env {
-  bounds: Bounds;
-  tankR: number;
-  bulletSpeed: number;
-  maxHp: number;
-}
-
-const CELL = 20;
 const TAU = Math.PI * 2;
 
 const PARAMS = [
   // лёгкий: медленный, косой, стреляет редко, не уворачивается
-  { think: 0.5, tol: 0.5, react: 0.8, err: 0.5, dodge: 0, power: 0, speed: 0.5, range: 450, lead: false, gap: 1.3 },
+  { think: 0.5, tol: 0.5, react: 0.8, err: 0.5, dodge: 0, speed: 0.5, range: 450, gap: 1.3, powerR: 0.6 },
   // обычный
-  { think: 0.3, tol: 0.26, react: 0.45, err: 0.22, dodge: 0.25, power: 1, speed: 0.75, range: 700, lead: false, gap: 0.8 },
+  { think: 0.3, tol: 0.26, react: 0.45, err: 0.22, dodge: 0.25, speed: 0.75, range: 700, gap: 0.8, powerR: 1 },
   // сложный
-  { think: 0.14, tol: 0.14, react: 0.22, err: 0.1, dodge: 0.6, power: 1, speed: 0.92, range: 1000, lead: false, gap: 0.5 },
+  { think: 0.14, tol: 0.14, react: 0.22, err: 0.1, dodge: 0.6, speed: 0.92, range: 1000, gap: 0.5, powerR: 1.2 },
 ];
 
 function angDiff(a: number, b: number) {
@@ -61,41 +66,35 @@ function angDiff(a: number, b: number) {
   return d;
 }
 
-/** Пересекает ли отрезок прямоугольник (с запасом pad). Liang–Barsky. */
-function segHitsRect(x0: number, y0: number, x1: number, y1: number, r: Rect, pad: number) {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  let t0 = 0;
-  let t1 = 1;
-  const p = [-dx, dx, -dy, dy];
-  const q = [x0 - (r.x - pad), r.x + r.w + pad - x0, y0 - (r.y - pad), r.y + r.h + pad - y0];
-  for (let i = 0; i < 4; i++) {
-    if (p[i] === 0) {
-      if (q[i] < 0) return false;
-    } else {
-      const t = q[i] / p[i];
-      if (p[i] < 0) {
-        if (t > t1) return false;
-        if (t > t0) t0 = t;
-      } else {
-        if (t < t0) return false;
-        if (t < t1) t1 = t;
-      }
-    }
+/** Насколько боту нужен бонус (0 = не нужен). */
+function needOf(type: string, me: BotTank): number {
+  switch (type) {
+    case "heal":
+      if (me.hp >= me.maxHp) return 0;
+      return me.hp <= 1 ? 1 : me.hp <= me.maxHp / 2 ? 0.8 : 0.35;
+    case "shield":
+      return me.hp <= 2 ? 0.7 : 0.5;
+    case "rapid":
+      return 0.45;
+    case "speed":
+      return 0.3;
+    case "triple":
+      return 0.6;
+    case "freeze":
+      return 0.6;
+    case "shock":
+      return 0.55;
+    default:
+      return 0.3;
   }
-  return true;
 }
 
 export class Bot {
-  private cols: number;
-  private rows: number;
-  private blocked: Uint8Array;
   private p;
   private thinkIn = 0;
   private path: { x: number; y: number }[] = [];
   private repathIn = 0;
   private move = { x: 0, y: 0 };
-  private fire = false;
   private alignedFor = 0;
   private sinceShot = 9;
   private aimErr = 0;
@@ -105,95 +104,123 @@ export class Bot {
   private stuckFor = 0;
   private jitterFor = 0;
   private jitterDir = { x: 1, y: 0 };
+  private targetId = -1;
+  private retargetIn = 0;
+  private chargeFor = 0;
+  private ricAim: number | null = null;
+  private ricIn = 0;
 
   constructor(
-    private env: Env,
-    private obstacles: Rect[],
-    difficulty: Difficulty
+    private nav: Nav,
+    difficulty: Difficulty,
+    private kind: BotKind = "normal",
+    env: { crowd: boolean } = { crowd: false }
   ) {
-    this.p = PARAMS[difficulty];
-    this.cols = Math.ceil(1280 / CELL);
-    this.rows = Math.ceil(720 / CELL);
-    this.blocked = new Uint8Array(this.cols * this.rows);
-    const pad = env.tankR + 3;
-    for (let cy = 0; cy < this.rows; cy++) {
-      for (let cx = 0; cx < this.cols; cx++) {
-        const x = cx * CELL + CELL / 2;
-        const y = cy * CELL + CELL / 2;
-        const bd = env.bounds;
-        let b = x < bd.l + env.tankR || x > bd.r - env.tankR || y < bd.t + env.tankR || y > bd.b - env.tankR;
-        if (!b) {
-          for (const o of obstacles) {
-            if (x > o.x - pad && x < o.x + o.w + pad && y > o.y - pad && y < o.y + o.h + pad) {
-              b = true;
-              break;
-            }
-          }
-        }
-        this.blocked[cy * this.cols + cx] = b ? 1 : 0;
+    const base = PARAMS[difficulty];
+    this.p = { ...base };
+    if (env.crowd) {
+      // в боях с толпой боты чуть медлительнее, иначе игроку слишком тяжело
+      this.p.react *= 1.25;
+      this.p.gap *= 1.3;
+    }
+    if (kind === "kamikaze") this.p.speed = 1;
+    if (kind === "sniper") {
+      this.p.range = 1200;
+      this.p.tol = 0.08;
+    }
+  }
+
+  private pickTarget(me: BotTank, tanks: BotTank[]): BotTank | null {
+    let best: BotTank | null = null;
+    let bestScore = Infinity;
+    for (const t of tanks) {
+      if (!t.alive || t.id === me.id || t.team === me.team) continue;
+      if (this.kind === "kamikaze" && !t.human) continue;
+      const d = Math.hypot(t.x - me.x, t.y - me.y);
+      let s = d;
+      if (this.nav.los(me.x, me.y, t.x, t.y, 7)) s -= 200;
+      if (t.hp <= 1) s -= 60;
+      if (t.id === this.targetId) s -= 90;
+      if (s < bestScore) {
+        bestScore = s;
+        best = t;
       }
     }
+    return best;
   }
 
-  private cellOf(x: number, y: number) {
-    return {
-      cx: Math.max(0, Math.min(this.cols - 1, Math.floor(x / CELL))),
-      cy: Math.max(0, Math.min(this.rows - 1, Math.floor(y / CELL))),
-    };
-  }
-
-  private los(x0: number, y0: number, x1: number, y1: number, pad = 7) {
-    for (const o of this.obstacles) if (segHitsRect(x0, y0, x1, y1, o, pad)) return false;
-    return true;
-  }
-
-  /** BFS по сетке в 8 направлениях. */
-  private findPath(sx: number, sy: number, gx: number, gy: number) {
-    const { cols, rows, blocked } = this;
-    const s = this.cellOf(sx, sy);
-    const g = this.cellOf(gx, gy);
-    const start = s.cy * cols + s.cx;
-    const goal = g.cy * cols + g.cx;
-    const prev = new Int32Array(cols * rows).fill(-2);
-    const q: number[] = [start];
-    prev[start] = -1;
-    let found = start === goal;
-    for (let qi = 0; qi < q.length && !found; qi++) {
-      const cur = q[qi];
-      const cx = cur % cols;
-      const cy = (cur / cols) | 0;
-      for (let dy = -1; dy <= 1 && !found; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (!dx && !dy) continue;
-          const nx = cx + dx;
-          const ny = cy + dy;
-          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-          const ni = ny * cols + nx;
-          if (prev[ni] !== -2) continue;
-          // цель всегда достижима, даже если стоит рядом с препятствием
-          if (blocked[ni] && ni !== goal) continue;
-          if (dx && dy && (blocked[cy * cols + nx] || blocked[ny * cols + cx])) continue;
-          prev[ni] = cur;
-          if (ni === goal) {
-            found = true;
-            break;
-          }
-          q.push(ni);
-        }
+  /** Выбор бонуса: бой в приоритете, берём то, что очень нужно или лежит по пути. */
+  private choosePower(me: BotTank, target: BotTank, seen: boolean, dist: number, tanks: BotTank[], powers: BotPower[]) {
+    if (this.kind === "kamikaze" || this.kind === "boss") return null;
+    let best: BotPower | null = null;
+    let bestVal = -Infinity;
+    for (const pw of powers) {
+      const need = needOf(pw.type, me);
+      if (need <= 0) continue;
+      const d = Math.hypot(pw.x - me.x, pw.y - me.y);
+      if (d > 340 * this.p.powerR) continue;
+      // гонку, которую уже проигрываем, не начинаем
+      if (tanks.some((o) => o.alive && o.id !== me.id && Math.hypot(o.x - pw.x, o.y - pw.y) < d * 0.65)) continue;
+      const engaged = seen && dist < 300;
+      const detour = d + Math.hypot(pw.x - target.x, pw.y - target.y) - dist;
+      const onWay = detour < 0.2 * dist + 30;
+      let ok: boolean;
+      if (engaged) ok = d < 70 || (need >= 0.9 && d < 140);
+      else ok = need >= 0.9 || onWay || (!seen && need >= 0.4);
+      if (!ok) continue;
+      const val = need * 400 - d;
+      if (val > bestVal) {
+        bestVal = val;
+        best = pw;
       }
     }
-    const out: { x: number; y: number }[] = [];
-    if (!found) return out;
-    for (let c = goal; c !== start && c >= 0; c = prev[c]) {
-      out.push({ x: (c % cols) * CELL + CELL / 2, y: ((c / cols) | 0) * CELL + CELL / 2 });
-    }
-    return out.reverse();
+    return best;
   }
 
-  update(dt: number, me: BotTank, enemy: BotTank, bullets: BotBullet[], powers: BotPower[], myIndex: number): BotInput {
+  /** Точка отражения от стены арены, чтобы достать цель за укрытием. */
+  private ricochetAim(me: BotTank, t: BotTank): number | null {
+    const bd = this.nav.bounds;
+    const cands: { hx: number; hy: number; len: number }[] = [];
+    const sides: [number, number, number][] = [
+      // [нормаль-ось, значение стены, ...] закодировано ниже
+      [0, bd.l, 0],
+      [0, bd.r, 0],
+      [1, bd.t, 0],
+      [1, bd.b, 0],
+    ];
+    for (const [axis, w] of sides) {
+      const mx = axis === 0 ? 2 * w - t.x : t.x;
+      const my = axis === 1 ? 2 * w - t.y : t.y;
+      const dx = mx - me.x;
+      const dy = my - me.y;
+      const k = axis === 0 ? (w - me.x) / dx : (w - me.y) / dy;
+      if (!(k > 0 && k < 1)) continue;
+      const hx = me.x + dx * k;
+      const hy = me.y + dy * k;
+      if (hx < bd.l || hx > bd.r || hy < bd.t || hy > bd.b) continue;
+      // чуть отступаем от стены, чтобы отрезок не упирался в неё
+      const ix = axis === 0 ? hx + (hx < (bd.l + bd.r) / 2 ? 4 : -4) : hx;
+      const iy = axis === 1 ? hy + (hy < (bd.t + bd.b) / 2 ? 4 : -4) : hy;
+      if (!this.nav.los(me.x, me.y, ix, iy, 6) || !this.nav.los(ix, iy, t.x, t.y, 6)) continue;
+      cands.push({ hx, hy, len: Math.hypot(hx - me.x, hy - me.y) + Math.hypot(t.x - hx, t.y - hy) });
+    }
+    if (!cands.length) return null;
+    cands.sort((a, b) => a.len - b.len);
+    return Math.atan2(cands[0].hy - me.y, cands[0].hx - me.x);
+  }
+
+  update(
+    dt: number,
+    me: BotTank,
+    tanks: BotTank[],
+    bullets: BotBullet[],
+    powers: BotPower[],
+    friendlyFire: boolean
+  ): BotInput {
     const p = this.p;
     this.errIn -= dt;
     this.sinceShot += dt;
+    this.retargetIn -= dt;
     if (this.errIn <= 0) {
       this.errIn = 0.6;
       this.aimErr = (Math.random() * 2 - 1) * p.err;
@@ -201,44 +228,58 @@ export class Bot {
     this.dodgeFor = Math.max(0, this.dodgeFor - dt);
     this.jitterFor = Math.max(0, this.jitterFor - dt);
 
+    let enemy: BotTank | null = tanks.find((t) => t.id === this.targetId && t.alive) ?? null;
+    if (!enemy || this.retargetIn <= 0) {
+      this.retargetIn = 1.1;
+      enemy = this.pickTarget(me, tanks);
+    }
+    if (!enemy) return { ix: 0, iy: 0, fire: false };
+    this.targetId = enemy.id;
+
     const dx = enemy.x - me.x;
     const dy = enemy.y - me.y;
     const dist = Math.hypot(dx, dy);
-    const seen = enemy.alive && this.los(me.x, me.y, enemy.x, enemy.y);
+    const seen = this.nav.los(me.x, me.y, enemy.x, enemy.y, 7);
 
-    // прицел с упреждением на сложном уровне
-    let ax = enemy.x;
-    let ay = enemy.y;
-    if (p.lead) {
-      const tt = dist / this.env.bulletSpeed;
-      ax += enemy.vx * tt * 0.8;
-      ay += enemy.vy * tt * 0.8;
+    // рикошетчик: если цели не видно, ищем выстрел через отражение
+    this.ricIn -= dt;
+    if (this.kind === "bouncer") {
+      if (seen) this.ricAim = null;
+      else if (this.ricIn <= 0) {
+        this.ricIn = 0.35;
+        this.ricAim = this.ricochetAim(me, enemy);
+      }
     }
-    const aimAng = Math.atan2(ay - me.y, ax - me.x) + this.aimErr;
+
+    let aimAng = Math.atan2(dy, dx) + this.aimErr;
+    let canShoot = seen;
+    if (this.kind === "bouncer" && !seen && this.ricAim !== null) {
+      aimAng = this.ricAim + this.aimErr * 0.4;
+      canShoot = true;
+    }
     const diff = Math.abs(angDiff(me.angle, aimAng));
-    const aligned = seen && diff < p.tol && dist < p.range;
+    const aligned = canShoot && diff < p.tol && dist < p.range;
     this.alignedFor = aligned ? this.alignedFor + dt : 0;
 
     // уклонение от летящих пуль
-    if (this.dodgeFor <= 0 && p.dodge > 0) {
+    if (this.dodgeFor <= 0 && p.dodge > 0 && this.kind !== "kamikaze") {
       for (const b of bullets) {
-        if (!b.alive || b.owner === myIndex) continue;
+        if (!b.alive || b.team === me.team) continue;
         const sp = Math.hypot(b.vx, b.vy) || 1;
         const rx = me.x - b.x;
         const ry = me.y - b.y;
         const along = (rx * b.vx + ry * b.vy) / sp;
         if (along < 0 || along > sp * 0.55) continue;
         const cross = (rx * b.vy - ry * b.vx) / sp;
-        if (Math.abs(cross) < this.env.tankR + 22 && Math.random() < p.dodge) {
+        if (Math.abs(cross) < me.r + 22 && Math.random() < p.dodge) {
           const nx = -b.vy / sp;
           const ny = b.vx / sp;
           const side = Math.sign(cross) || 1;
           let sx = nx * -side;
           let sy = ny * -side;
-          // выбираем сторону, где больше места
           const px = me.x + sx * 90;
           const py = me.y + sy * 90;
-          const bd = this.env.bounds;
+          const bd = this.nav.bounds;
           if (px < bd.l + 30 || px > bd.r - 30 || py < bd.t + 30 || py > bd.b - 30) {
             sx = -sx;
             sy = -sy;
@@ -258,38 +299,35 @@ export class Bot {
       let gx = enemy.x;
       let gy = enemy.y;
       let goingToPower = false;
-      if (p.power && powers.length) {
-        let best = -1;
-        let bd = 340;
-        powers.forEach((pw, i) => {
-          if (pw.type === "heal" && me.hp >= this.env.maxHp) return;
-          const d = Math.hypot(pw.x - me.x, pw.y - me.y);
-          if (d < bd) {
-            bd = d;
-            best = i;
-          }
-        });
-        if (best >= 0 && (!seen || dist > 300)) {
-          gx = powers[best].x;
-          gy = powers[best].y;
-          goingToPower = true;
-        }
+      const pw = this.choosePower(me, enemy, seen, dist, tanks, powers);
+      if (pw) {
+        gx = pw.x;
+        gy = pw.y;
+        goingToPower = true;
       }
-      const direct = (seen && !goingToPower) || this.los(me.x, me.y, gx, gy, this.env.tankR + 4);
+      const direct = (seen && !goingToPower) || this.nav.los(me.x, me.y, gx, gy, me.r + 4);
       if (direct) {
         this.move = { x: gx - me.x, y: gy - me.y };
         this.path = [];
       } else {
         if (this.repathIn <= 0 || this.path.length === 0) {
-          this.path = this.findPath(me.x, me.y, gx, gy);
+          this.path = this.nav.findPath(me.x, me.y, gx, gy);
           this.repathIn = 0.3;
         }
         const wp = this.path[Math.min(2, this.path.length - 1)];
         this.move = wp ? { x: wp.x - me.x, y: wp.y - me.y } : { x: gx - me.x, y: gy - me.y };
       }
       // слишком близко, а выстрела нет: отступаем боком
-      if (seen && dist < 130 && !aligned) {
+      if (seen && dist < 130 && !aligned && this.kind !== "kamikaze") {
         this.move = { x: -(enemy.y - me.y), y: enemy.x - me.x };
+      }
+      // снайпер держит дистанцию
+      if (this.kind === "sniper" && seen && !goingToPower) {
+        const nx = dx / (dist || 1);
+        const ny = dy / (dist || 1);
+        if (dist < 380) this.move = { x: -nx + -ny * 0.5, y: -ny + nx * 0.5 };
+        else if (dist > 560) this.move = { x: nx, y: ny };
+        else this.move = { x: -ny * 0.6, y: nx * 0.6 };
       }
     }
 
@@ -305,13 +343,14 @@ export class Bot {
 
     let mx = this.move.x;
     let my = this.move.y;
+    const independentAim = this.kind === "sniper" || this.kind === "bouncer";
     if (this.dodgeFor > 0) {
       mx = this.dodgeDir.x;
       my = this.dodgeDir.y;
     } else if (this.jitterFor > 0) {
       mx = this.jitterDir.x;
       my = this.jitterDir.y;
-    } else if (seen && dist < 520) {
+    } else if (!independentAim && this.kind !== "kamikaze" && seen && dist < 520) {
       // в зоне видимости доворачиваем корпус на цель
       mx = Math.cos(aimAng);
       my = Math.sin(aimAng);
@@ -320,8 +359,46 @@ export class Bot {
     mx = (mx / len) * p.speed;
     my = (my / len) * p.speed;
 
-    this.fire = aligned && this.alignedFor >= p.react && this.sinceShot >= p.gap;
-    if (this.fire) this.sinceShot = 0;
-    return { ix: mx, iy: my, fire: this.fire };
+    // стрельба
+    let fire = false;
+    let charging = false;
+    if (this.kind === "kamikaze") {
+      return { ix: mx, iy: my, fire: false };
+    }
+    if (this.kind === "sniper") {
+      if (aligned && this.dodgeFor <= 0) {
+        if (this.chargeFor === 0) this.chargeFor = 0.0001;
+        this.chargeFor += dt;
+        charging = true;
+        mx = 0;
+        my = 0;
+        if (this.chargeFor >= 0.6 && this.sinceShot >= p.gap) {
+          fire = true;
+          this.chargeFor = 0;
+          charging = false;
+        }
+      } else {
+        this.chargeFor = 0;
+      }
+    } else {
+      fire = aligned && this.alignedFor >= p.react && this.sinceShot >= p.gap;
+    }
+    // при включённом огне по своим не стреляем, если на линии союзник
+    if (fire && friendlyFire) {
+      const cx = Math.cos(me.angle);
+      const cy = Math.sin(me.angle);
+      for (const o of tanks) {
+        if (!o.alive || o.id === me.id || o.team !== me.team) continue;
+        const rx = o.x - me.x;
+        const ry = o.y - me.y;
+        const along = rx * cx + ry * cy;
+        if (along > 0 && Math.abs(rx * cy - ry * cx) < o.r + 8) {
+          fire = false;
+          break;
+        }
+      }
+    }
+    if (fire) this.sinceShot = 0;
+    return { ix: mx, iy: my, fire, aim: independentAim ? aimAng : undefined, charging };
   }
 }

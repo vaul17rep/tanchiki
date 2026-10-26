@@ -20,7 +20,7 @@ export interface MapDef {
 }
 
 const W = 1280;
-const FULL: Bounds = { l: 40, t: 40, r: 1240, b: 680 };
+export const FULL: Bounds = { l: 40, t: 40, r: 1240, b: 680 };
 
 /** Зеркало относительно вертикальной оси x = 640. */
 const mirror = (r: Rect): Rect => ({ x: W - r.x - r.w, y: r.y, w: r.w, h: r.h });
