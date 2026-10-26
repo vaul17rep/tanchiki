@@ -123,8 +123,8 @@ export class Bot {
     this.p = { ...base };
     if (env.crowd) {
       // в боях с толпой боты чуть медлительнее, иначе игроку слишком тяжело
-      this.p.react *= 1.25;
-      this.p.gap *= 1.3;
+      this.p.react *= 1.6;
+      this.p.gap *= 2;
     }
     if (kind === "kamikaze") this.p.speed = 1;
     // у каждого бота своя излюбленная дистанция боя, чтобы толпа не липла к цели вплотную

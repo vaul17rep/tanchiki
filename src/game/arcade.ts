@@ -20,11 +20,11 @@ export interface EnemyStat {
 }
 
 export const ENEMY: Record<BotKind, EnemyStat> = {
-  normal: { hp: 1, r: 18, speedMul: 0.85, fireMul: 1.3, color: "#f87171", dark: "#451a1a", score: 100 },
-  scout: { hp: 1, r: 14, speedMul: 1.4, fireMul: 1.8, color: "#fbbf24", dark: "#4a3408", score: 120 },
-  heavy: { hp: 2, r: 23, speedMul: 0.6, fireMul: 1.1, color: "#fb923c", dark: "#4a2308", score: 250 },
-  sniper: { hp: 1, r: 17, speedMul: 0.75, fireMul: 2.2, color: "#a78bfa", dark: "#2a1f55", score: 220 },
-  bouncer: { hp: 2, r: 18, speedMul: 0.85, fireMul: 1.5, color: "#4ade80", dark: "#0f3a22", score: 220 },
+  normal: { hp: 1, r: 18, speedMul: 0.85, fireMul: 1.6, color: "#f87171", dark: "#451a1a", score: 100 },
+  scout: { hp: 1, r: 14, speedMul: 1.4, fireMul: 2.2, color: "#fbbf24", dark: "#4a3408", score: 120 },
+  heavy: { hp: 2, r: 23, speedMul: 0.6, fireMul: 1.4, color: "#fb923c", dark: "#4a2308", score: 250 },
+  sniper: { hp: 1, r: 17, speedMul: 0.75, fireMul: 2.6, color: "#a78bfa", dark: "#2a1f55", score: 220 },
+  bouncer: { hp: 2, r: 18, speedMul: 0.85, fireMul: 1.9, color: "#4ade80", dark: "#0f3a22", score: 220 },
   kamikaze: { hp: 1, r: 16, speedMul: 1.45, fireMul: 1, color: "#f43f5e", dark: "#4c0f1c", score: 150 },
   boss: { hp: 12, r: 31, speedMul: 0.55, fireMul: 2.4, color: "#e879f9", dark: "#4a1456", score: 2000 },
 };
@@ -53,7 +53,7 @@ export function specialOf(n: number): Special | null {
 }
 
 export function bossHp(n: number) {
-  return 12 + 4 * (Math.floor(n / 5) - 1);
+  return 10 + 3 * (Math.floor(n / 5) - 1);
 }
 
 export function enemyHp(kind: BotKind, n: number) {
@@ -71,7 +71,7 @@ export function waveSpec(n: number): WaveSpec {
   if (boss) {
     queue = ["boss"];
   } else if (special === "avalanche") {
-    const cnt = 9 + Math.floor(n / 5);
+    const cnt = 7 + Math.floor(n / 5);
     for (let i = 0; i < cnt; i++) queue.push(Math.random() < 0.7 ? "normal" : "scout");
   } else if (special === "mirror") {
     queue = ["normal"];
@@ -102,10 +102,10 @@ export function waveSpec(n: number): WaveSpec {
       queue.push(pick);
     }
   }
-  const maxField = boss ? 1 : special === "avalanche" ? 10 : Math.min(queue.length, n >= 10 ? 7 : 6);
+  const maxField = boss ? 1 : special === "avalanche" ? 8 : Math.min(queue.length, n >= 10 ? 6 : 5);
   const sides = special === "avalanche" ? 4 : n < 3 ? 1 : n < 6 ? 2 : 3;
   const stage: 0 | 1 | 2 = boss || special === "avalanche" ? 2 : maxField <= 2 ? 0 : maxField <= 4 ? 1 : 2;
-  return { n, boss, special, queue, maxField, sides, stage, tierBonus: Math.floor(n / 6) };
+  return { n, boss, special, queue, maxField, sides, stage, tierBonus: Math.floor(n / 8) };
 }
 
 export function stageBounds(stage: 0 | 1 | 2): Bounds {
