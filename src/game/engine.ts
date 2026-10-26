@@ -688,8 +688,8 @@ export class Game {
           x: p.x,
           y: p.y,
           angle: faceCenter(p, i),
-          hp: big ? 5 + (this.arcade ? this.up.hp : 0) : 3,
-          cap: big ? 8 + (this.arcade ? this.up.hp : 0) : 5,
+          hp: big ? (this.arcade ? 6 : mode === "squad" ? (nH === 1 && nB >= 5 ? 10 : 7) : 5) + (this.arcade ? this.up.hp : 0) : 3,
+          cap: big ? (mode === "squad" ? (nH === 1 && nB >= 5 ? 12 : 10) : 8) + (this.arcade ? this.up.hp : 0) : 5,
           look: HUMAN_LOOK[i],
         })
       );
@@ -1003,7 +1003,8 @@ export class Game {
     const angles = triple ? [-0.24, 0, 0.24] : [spread];
     let sp = BULLET_SPEED * nSpeed;
     if (t.kind === "sniper") sp *= 1.45;
-    if (!t.human && this.arcade) sp *= 0.9;
+    if (!t.human && this.arcade) sp *= 0.8;
+    else if (!t.human && this.crowd) sp *= 0.88;
     if (t.human && this.arcade) sp *= 1 + this.up.bspeed * 0.15;
     for (const da of angles) {
       const a = t.angle + da;
@@ -1532,19 +1533,19 @@ export class Game {
       .filter((o) => o.alive && o.human)
       .sort((a, b) => Math.hypot(a.x - t.x, a.y - t.y) - Math.hypot(b.x - t.x, b.y - t.y))[0];
     if (target && now >= t.nextFan && now - t.bornAt > 800) {
-      t.nextFan = now + (frac < 0.66 ? 3600 : 4600);
+      t.nextFan = now + (frac < 0.66 ? 4200 : 5200);
       const base = Math.atan2(target.y - t.y, target.x - t.x);
-      const n = frac < 0.66 ? 7 : 5;
+      const n = frac < 0.66 ? 5 : 4;
       const keep = t.angle;
       for (let i = 0; i < n; i++) {
-        t.angle = base + (i - (n - 1) / 2) * 0.3;
+        t.angle = base + (i - (n - 1) / 2) * 0.36;
         this.fire(t, 0, 0.7, i > 0);
       }
       t.angle = keep;
     }
     if (frac < 0.66 && now >= t.nextSummon) {
-      t.nextSummon = now + 9000;
-      for (let i = 0; i < 2; i++) {
+      t.nextSummon = now + 12000;
+      for (let i = 0; i < 1; i++) {
         const a = rand(0, TAU);
         const pt = this.findFree(t.x + Math.cos(a) * 70, t.y + Math.sin(a) * 70, 16, this.tanks);
         this.spawnEnemy("scout", pt.x, pt.y, false);
